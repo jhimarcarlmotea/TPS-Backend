@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 
 class SocialAuthController extends Controller
 {
@@ -63,7 +64,15 @@ class SocialAuthController extends Controller
         if (!$user->is_active) {
             return $this->error('This account is disabled.', 403);
         }
-
+        
+        
+        if (!$user->avatar_path && !empty($g['picture'])) {
+            $this->saveRemoteAvatar($user, str_replace('=s96-c', '=s400-c', $g['picture']));
+        }
+                $pic = $me['picture']['data'] ?? [];
+        if (!$user->avatar_path && !empty($pic['url']) && empty($pic['is_silhouette'])) {
+            $this->saveRemoteAvatar($user, $pic['url']);
+        }
         return $this->authResponse($user);
     }
 
@@ -124,10 +133,33 @@ class SocialAuthController extends Controller
         if (!$user->is_active) {
             return $this->error('This account is disabled.', 403);
         }
-
+        
+        if (!$user->avatar_path && !empty($g['picture'])) {
+            $this->saveRemoteAvatar($user, str_replace('=s96-c', '=s400-c', $g['picture']));
+        }
+        $pic = $me['picture']['data'] ?? [];
+        if (!$user->avatar_path && !empty($pic['url']) && empty($pic['is_silhouette'])) {
+            $this->saveRemoteAvatar($user, $pic['url']);
+        }
         return $this->authResponse($user);
     }
+    // Downloads the Google/Facebook picture and keeps our own copy
+    // (their links can expire, so we don't store the link itself).
+    private function saveRemoteAvatar(User $user, string $url): void
+    {
+        try {
+            $res = Http::timeout(8)->get($url);
+            if (!$res->successful() || @getimagesizefromstring($res->body()) === false) {
+                return;
+            }
 
+            $path = 'avatars/' . $user->id . '-' . time() . '.jpg';
+            Storage::disk('public')->put($path, $res->body());
+            $user->forceFill(['avatar_path' => $path])->save();
+        } catch (\Throwable $e) {
+            // No picture is not a reason to block the login.
+        }
+    }
     // ---------- VERIFY CODE ----------
     public function verify(Request $request)
     {
