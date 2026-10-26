@@ -9,15 +9,22 @@ use Illuminate\Http\Request;
 
 class AdminScheduleController extends Controller
 {
-    // Provider ng naka-login na admin. Pansamantala: kung wala pang auth, unang provider.
+    
     private function providerId(Request $request): int
-    {
-        $provider = Provider::where('user_id', $request->user()?->id)->first()
-            ?? Provider::first();
+{
+    $user = $request->user();
 
-        abort_if(!$provider, 404, 'No provider found. Create a provider first.');
-        return $provider->id;
-    }
+   
+    $provider = Provider::firstOrCreate(
+        ['user_id' => $user->id],
+        [
+            'code'         => 'P' . str_pad((string) Provider::count(), 3, '0', STR_PAD_LEFT),
+            'display_name' => trim($user->first_name . ' ' . $user->last_name),
+        ]
+    );
+
+    return $provider->id;
+}
 
     // Row sa database -> format na hinahanap ng frontend
     private function format(ProviderAvailability $s): array
