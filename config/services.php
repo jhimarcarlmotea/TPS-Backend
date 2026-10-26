@@ -13,7 +13,15 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+    ],
 
+    'facebook' => [
+        'app_id' => env('FACEBOOK_APP_ID'),
+        'app_secret' => env('FACEBOOK_APP_SECRET'),
+    ],
+    
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],
