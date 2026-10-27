@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminScheduleController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\HomeContentController;   // ← bago
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SocialAuthController;
 use Illuminate\Support\Facades\Route;
@@ -13,6 +14,9 @@ Route::post('/auth/google', [AuthController::class, 'handleGoogleAuth']);
 Route::post('/auth/facebook', [SocialAuthController::class, 'facebook']);
 Route::post('/email/verify', [SocialAuthController::class, 'verify'])->middleware('throttle:6,1');
 Route::post('/email/resend', [SocialAuthController::class, 'resend'])->middleware('throttle:3,1');
+
+// Public: kailangan din ng Client Site home page            // ← bago
+Route::get('/home-content', [HomeContentController::class, 'show']);   // ← bago
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
@@ -34,5 +38,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [AdminScheduleController::class, 'index']);
         Route::post('/slots', [AdminScheduleController::class, 'store']);
         Route::delete('/slots/{id}', [AdminScheduleController::class, 'destroy']);
+    });
+
+    // Admin only: manage home page content                    // ← bago
+    Route::middleware('role:ADMIN')->group(function () {       // ← bago
+        Route::put('/home-content', [HomeContentController::class, 'update']);
+        Route::post('/home-content/image', [HomeContentController::class, 'uploadImage']);
     });
 });
