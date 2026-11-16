@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -66,6 +67,19 @@ class AssessmentTypeController extends Controller
 
         $type = DB::table('assessment_types')->find($id);
 
+        $admin = $request->user();
+        if ($admin) {
+            ActivityLog::log(
+                $admin,
+                'assessment_type_created',
+                'service',
+                'Created Assessment Type',
+                "{$admin->first_name} {$admin->last_name} ({$admin->role}) added assessment type: {$type->name} (₱" . number_format((float) $type->price, 2) . ")",
+                null,
+                ['name' => $type->name, 'price' => (float) $type->price]
+            );
+        }
+
         return response()->json(['type' => $this->format($type)], 201);
     }
 
@@ -95,6 +109,20 @@ class AssessmentTypeController extends Controller
         DB::table('assessment_types')->where('id', $id)->update($patch);
 
         $updated = DB::table('assessment_types')->find($id);
+
+        $admin = $request->user();
+        if ($admin) {
+            ActivityLog::log(
+                $admin,
+                'assessment_type_updated',
+                'service',
+                'Updated Assessment Type',
+                "{$admin->first_name} {$admin->last_name} ({$admin->role}) updated assessment type: {$updated->name} (₱" . number_format((float) $updated->price, 2) . ")",
+                null,
+                ['name' => $updated->name, 'price' => (float) $updated->price]
+            );
+        }
+
         return response()->json(['type' => $this->format($updated)]);
     }
 
@@ -107,6 +135,20 @@ class AssessmentTypeController extends Controller
         if (!$type) return response()->json(['message' => 'Not found.'], 404);
 
         DB::table('assessment_types')->where('id', $id)->delete();
+
+        $admin = request()?->user();
+        if ($admin) {
+            ActivityLog::log(
+                $admin,
+                'assessment_type_deleted',
+                'service',
+                'Deleted Assessment Type',
+                "{$admin->first_name} {$admin->last_name} ({$admin->role}) deleted assessment type: {$type->name}",
+                null,
+                ['name' => $type->name]
+            );
+        }
+
         return response()->json(['message' => 'Deleted.']);
     }
 

@@ -175,10 +175,11 @@ class ConsentController extends Controller
             ]);
             $data['dsm5'] = [];
         } else {
+            $intakeRelation = ['required', 'string', 'min:2', 'max:60'];
             $data = $request->validate([
                 'intake.full_name'      => $name,
-                'intake.nickname'       => ['nullable', 'string', 'max:60'],
-                'intake.gender'         => ['nullable', 'string', 'max:60'],
+                'intake.nickname'       => ['nullable', 'string', 'max:60', 'regex:' . self::NAME_RE],
+                'intake.gender'         => ['nullable', 'in:Male,Female'],
                 'intake.civil_status'   => ['nullable', 'string', 'max:30'],
                 'intake.birthdate'      => ['required', 'date_format:Y-m-d', 'before_or_equal:today', 'after:1899-12-31'],
                 'intake.address'        => ['required', 'string', 'min:5', 'max:255'],
@@ -189,7 +190,7 @@ class ConsentController extends Controller
 
                 'intake.emergency'              => ['required', 'array', 'min:1', 'max:2'],
                 'intake.emergency.*.name'       => $name,
-                'intake.emergency.*.relation'   => $rel,
+                'intake.emergency.*.relation'   => $intakeRelation,
                 'intake.emergency.*.mobile'     => $tel,
 
                 'intake.reason'         => ['required', 'string', 'min:5', 'max:2000'],
@@ -223,6 +224,7 @@ class ConsentController extends Controller
                 'guardian.signature_data' => ['nullable', 'string'],
             ], [
                 'intake.full_name.regex' => 'Full name must not contain numbers.',
+                'intake.nickname.regex'  => 'Nickname must not contain numbers.',
                 'intake.mobile.regex'    => 'Mobile number must be 11 digits (e.g. 09123456789).',
                 'sign.name.regex'        => 'Signature name must not contain numbers.',
                 'dsm5.size'              => 'Please answer all 23 symptom questions.',

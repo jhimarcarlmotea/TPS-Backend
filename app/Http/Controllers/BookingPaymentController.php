@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\BookingPayment;
 use App\Models\ClientProfile;
 use App\Models\PaymentMethod;
@@ -107,28 +108,41 @@ class BookingPaymentController extends Controller
     {
 
         $data = $request->validate([
-            'hold_id'          => ['required', 'integer'],
-            'type'             => ['required', 'in:full,down'],
-            'method_id'        => ['required', 'integer'],
-            'wallet_number'    => ['required', 'regex:/^\d{6,20}$/'],
-            'reference_number' => ['required', 'regex:/^[A-Za-z0-9-]{6,60}$/'],
-            'receipt'          => ['required', 'string'],
-        ], [
-            'wallet_number.regex'    => 'Enter a valid account / wallet number (digits only).',
-            'reference_number.regex' => 'Reference number must be 6-60 letters or numbers.',
+            'hold_id'   => ['required', 'integer'],
+            'type'      => ['required', 'in:full,down'],
+            'method_id' => ['required', 'integer'],
+            'receipt'   => ['required', 'string'],
         ]);
 
         $user = $request->user();
 
-        if (!preg_match('/^data:image\/jpeg;base64,/', $data['receipt'])) {
+        if (!preg_match('/^data:image\/(jpeg|png|webp);base64,/', $data['receipt'])) {
             return response()->json(['message' => 'Please upload a JPG or PNG screenshot.'], 422);
         }
         $binary = base64_decode(substr($data['receipt'], strpos($data['receipt'], ',') + 1), true);
-        if ($binary === false || strlen($binary) > 3 * 1024 * 1024 || @getimagesizefromstring($binary) === false) {
+        if ($binary === false || strlen($binary) > 5 * 1024 * 1024 || @getimagesizefromstring($binary) === false) {
             return response()->json(['message' => 'That receipt image could not be used. Try a smaller one.'], 422);
         }
 
-        return DB::transaction(function () use ($data, $user, $binary) {
+        // ── SHA-256 duplicate-receipt detection ───────────────────────────────────
+        $receiptHash = hash('sha256', $binary);
+
+        // Check if this exact image was already used (across any user) in an
+        // active or verified payment. Rejected payments are excluded so a
+        // client can re-submit after a rejection without being blocked.
+        $duplicate = BookingPayment::where('receipt_hash', $receiptHash)
+            ->whereNotIn('status', ['rejected'])
+            ->first();
+
+        if ($duplicate) {
+            return response()->json([
+                'message' => '⚠️ Duplicate receipt detected. This screenshot has already been used for a previous payment submission. Please use a new, unique proof of payment.',
+                'duplicate' => true,
+            ], 409);
+        }
+        // ──────────────────────────────────────────────────────────────────────────
+
+        return DB::transaction(function () use ($data, $user, $binary, $receiptHash) {
             $hold = SlotHold::where('id', $data['hold_id'])
                 ->where('user_id', $user->id)
                 ->where('expires_at', '>', now())
@@ -214,9 +228,10 @@ class BookingPaymentController extends Controller
                 'amount_paid'          => $paid,
                 'balance'              => $balance,
                 'method_name'          => $method->name,
-                'wallet_number'        => $data['wallet_number'],
-                'reference_number'     => $data['reference_number'],
+                'wallet_number'        => null,
+                'reference_number'     => null,
                 'receipt_path'         => $path,
+                'receipt_hash'         => $receiptHash,
             ];
 
             // Nag-bayad ulit ang parehong client para sa parehong oras? I-update ang na-reject na row.
@@ -255,6 +270,27 @@ class BookingPaymentController extends Controller
             $clientProfile->booking_payment_id = $payment->id;
             $clientProfile->save();
             $hold->delete(); // ang booking_payments na ang naka-block sa slot
+
+            $cName = $clientProfile->full_name ?: trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+            $sName = self::SERVICE_NAMES[$payment->service_id] ?? ucfirst($payment->service_id);
+            if ($payment->assessment_type_name) {
+                $sName .= " ({$payment->assessment_type_name})";
+            }
+            ActivityLog::log(
+                $user,
+                'appointment_booked',
+                'appointment',
+                'Booked ' . $sName,
+                "Client {$cName} booked an appointment for {$sName} (Ref: {$payment->reference}) and uploaded initial payment proof of ₱" . number_format((float) $payment->amount_paid, 2),
+                $payment->reference,
+                [
+                    'client_name'   => $cName,
+                    'service_name'  => $sName,
+                    'amount'        => (float) $payment->amount_paid,
+                    'payment_type'  => $payment->payment_type,
+                    'start_at'      => $payment->start_at?->toIso8601String(),
+                ]
+            );
 
             return response()->json(['payment' => [
                 'id'         => $payment->id,
@@ -567,6 +603,17 @@ class BookingPaymentController extends Controller
                 'updated_at'         => now(),
             ]);
 
+            $u = User::find($userId);
+            ActivityLog::log(
+                $u,
+                'balance_submitted',
+                'payment',
+                'Submitted Balance Payment',
+                "Client " . trim(($u?->first_name ?? '') . ' ' . ($u?->last_name ?? '')) . " submitted balance payment proof of ₱" . number_format((float) $p->balance, 2) . " for Ref: {$p->reference}",
+                $p->reference,
+                ['amount' => (float) $p->balance]
+            );
+
             return response()->json([
                 'balance_payment' => $this->balanceInfo(DB::table('balance_payments')->find($rowId)),
             ], 201);
@@ -586,8 +633,7 @@ class BookingPaymentController extends Controller
         $q = BookingPayment::query();
 
         if ($user->role === 'AFFILIATE') {
-            return $q->where('service_id', 'psychotherapy')
-                ->where('psychologist_user_id', $user->id);
+            return $q->where('psychologist_user_id', $user->id);
         }
 
         // ADMIN: psychotherapy na sila ang pinili, at ABA/Assessment na naka-assign
@@ -728,6 +774,30 @@ class BookingPaymentController extends Controller
             'reject_reason' => $reason,
         ])->save();
 
+        $cProfile = ClientProfile::where('booking_payment_id', $p->id)->first();
+        $clientName = $cProfile?->full_name ?: 'Client';
+        if ($status === 'verified') {
+            ActivityLog::log(
+                $user,
+                'payment_verified',
+                'payment',
+                'Verified Initial Payment',
+                "{$user->first_name} {$user->last_name} ({$user->role}) verified initial payment of ₱" . number_format((float) $p->amount_paid, 2) . " for client {$clientName} (Ref: {$p->reference})",
+                $p->reference,
+                ['client_name' => $clientName, 'amount' => (float) $p->amount_paid]
+            );
+        } else {
+            ActivityLog::log(
+                $user,
+                'payment_rejected',
+                'payment',
+                'Rejected Initial Payment',
+                "{$user->first_name} {$user->last_name} ({$user->role}) rejected initial payment for client {$clientName} (Ref: {$p->reference}). Reason: " . ($reason ?: 'Invalid receipt'),
+                $p->reference,
+                ['client_name' => $clientName, 'reason' => $reason]
+            );
+        }
+
         $profiles = $this->profilesFor(collect([$p]));
         $users    = User::where('id', $p->user_id)->get()->keyBy('id');
 
@@ -793,6 +863,30 @@ class BookingPaymentController extends Controller
         $p->refresh();
         $profiles = $this->profilesFor(collect([$p]));
         $users    = User::where('id', $p->user_id)->get()->keyBy('id');
+
+        $cProfile = $profiles['booking'][$p->id] ?? $profiles['user'][$p->user_id] ?? null;
+        $clientName = $cProfile?->full_name ?: 'Client';
+        if ($status === 'verified') {
+            ActivityLog::log(
+                $user,
+                'balance_verified',
+                'payment',
+                'Verified Balance Payment',
+                "{$user->first_name} {$user->last_name} ({$user->role}) verified balance payment of ₱" . number_format((float) $bal->amount, 2) . " for client {$clientName} (Ref: {$p->reference})",
+                $p->reference,
+                ['client_name' => $clientName, 'amount' => (float) $bal->amount]
+            );
+        } else {
+            ActivityLog::log(
+                $user,
+                'balance_rejected',
+                'payment',
+                'Rejected Balance Payment',
+                "{$user->first_name} {$user->last_name} ({$user->role}) rejected balance payment for client {$clientName} (Ref: {$p->reference}). Reason: " . ($reason ?: 'Rejected receipt'),
+                $p->reference,
+                ['client_name' => $clientName, 'reason' => $reason]
+            );
+        }
 
         return response()->json(['payment' => $this->format($p, $profiles, $users)]);
     }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\BookingPayment;
 use App\Models\ClientProfile;
 use App\Models\ConsentForm;
@@ -266,7 +267,20 @@ private function unfinished($q)
             'decline_reason'  => null,
         ])->save();
 
-        return response()->json(['appointment' => $this->one($p)]);
+        $one = $this->one($p);
+        $clientName = $one['client_name'] ?? 'Client';
+        $actor = $request->user();
+        ActivityLog::log(
+            $actor,
+            'appointment_approved',
+            'appointment',
+            'Approved Appointment',
+            "{$actor->first_name} {$actor->last_name} ({$actor->role}) approved appointment for client {$clientName} on {$p->start_at->format('M d, Y h:i A')} (Ref: {$p->reference})",
+            $p->reference,
+            ['client_name' => $clientName, 'service_name' => $one['service_name'] ?? $p->service_id]
+        );
+
+        return response()->json(['appointment' => $one]);
     }
 
     // POST .../appointments/{id}/decline
@@ -290,7 +304,20 @@ private function unfinished($q)
             'decline_reason'  => $reason,
         ])->save();
 
-        return response()->json(['appointment' => $this->one($p)]);
+        $one = $this->one($p);
+        $clientName = $one['client_name'] ?? 'Client';
+        $actor = $request->user();
+        ActivityLog::log(
+            $actor,
+            'appointment_declined',
+            'appointment',
+            'Declined Appointment',
+            "{$actor->first_name} {$actor->last_name} ({$actor->role}) declined appointment for client {$clientName} (Ref: {$p->reference}). Reason: " . ($reason ?: 'Declined by clinic'),
+            $p->reference,
+            ['client_name' => $clientName, 'reason' => $reason]
+        );
+
+        return response()->json(['appointment' => $one]);
     }
 
     // POST .../appointments/{id}/complete
@@ -310,6 +337,19 @@ private function unfinished($q)
 
         $p->forceFill(['completed_at' => now()])->save();
 
-        return response()->json(['appointment' => $this->one($p)]);
+        $one = $this->one($p);
+        $clientName = $one['client_name'] ?? 'Client';
+        $actor = $request->user();
+        ActivityLog::log(
+            $actor,
+            'appointment_completed',
+            'appointment',
+            'Completed Session',
+            "{$actor->first_name} {$actor->last_name} ({$actor->role}) marked session completed for client {$clientName} (Ref: {$p->reference})",
+            $p->reference,
+            ['client_name' => $clientName]
+        );
+
+        return response()->json(['appointment' => $one]);
     }
 }

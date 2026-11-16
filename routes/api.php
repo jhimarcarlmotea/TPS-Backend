@@ -21,6 +21,7 @@ use App\Http\Controllers\AssessmentTypeController;
 use App\Http\Controllers\HomeContentController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\AboutController;
+use App\Http\Controllers\ActivityLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
@@ -91,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('role:ADMIN')->prefix('admin/schedule')->group(function () {
         Route::get('/', [AdminScheduleController::class, 'index']);
         Route::post('/slots', [AdminScheduleController::class, 'store']);
+        Route::post('/slots/{id}/restore', [AdminScheduleController::class, 'restoreBlockedTime']);
         Route::delete('/slots/{id}', [AdminScheduleController::class, 'destroy']);
     });
 
@@ -145,6 +147,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/clients', [AdminClientController::class, 'index']);
         Route::get('/clients/{id}', [AdminClientController::class, 'show']);
         Route::put('/clients/{id}', [AdminClientController::class, 'update']);
+
+        // Activity logs
+        Route::get('/activity-logs', [ActivityLogController::class, 'index']);
     });
 
     // Affiliate: payments + appointments (walang settings)
@@ -170,6 +175,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('role:AFFILIATE')->prefix('affiliate/schedule')->group(function () {
         Route::get('/', [AffiliateScheduleController::class, 'index']);
         Route::post('/slots', [AffiliateScheduleController::class, 'store']);
+        Route::post('/slots/{id}/restore', [AffiliateScheduleController::class, 'restoreBlockedTime']);
         Route::delete('/slots/{id}', [AffiliateScheduleController::class, 'destroy']);
     });
         // Agora Video Call Token

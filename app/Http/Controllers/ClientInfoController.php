@@ -32,7 +32,7 @@ class ClientInfoController extends Controller
 
         if ($profile) {
             return response()->json([
-                'info' => array_merge($this->format($profile), ['full_name' => $accountName]),
+                'info' => $this->format($profile),
                 'saved' => true,
             ]);
         }
@@ -81,18 +81,17 @@ class ClientInfoController extends Controller
             'email'              => ['required', 'email:rfc', 'max:190'],
             'mobile'             => $phoneRule,
             'emergency_name'     => $nameRule,
-            'emergency_relation' => ['required', 'string', 'min:2', 'max:60', 'regex:/^[\pL][\pL\s.\'’-]*$/u'],
+            'emergency_relation' => ['required', 'string', 'min:2', 'max:60'],
             'emergency_phone'    => $phoneRule,
         ], [
             'full_name.regex'          => 'Full name must not contain numbers.',
             'emergency_name.regex'     => 'Contact name must not contain numbers.',
-            'emergency_relation.regex' => 'Relationship must contain letters only.',
             'birthdate.before_or_equal' => 'Date of birth cannot be in the future.',
             'mobile.regex'             => 'Mobile number must be 11 digits (e.g. 09123456789).',
             'emergency_phone.regex'    => 'Contact phone must be 11 digits (e.g. 09123456789).',
         ]);
 
-        $profileData['full_name']          = trim($user->first_name . ' ' . $user->last_name);
+        $profileData['full_name']          = trim($profileData['full_name']);
         $profileData['emergency_name']     = trim($profileData['emergency_name']);
         $profileData['emergency_relation'] = trim($profileData['emergency_relation']);
         $profileData['email']              = strtolower(trim($profileData['email']));

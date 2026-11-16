@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -110,6 +111,17 @@ class AdminAccountController extends Controller
             'email_verified_at' => now(),
         ]);
 
+        $admin = $request->user();
+        ActivityLog::log(
+            $admin,
+            'account_created',
+            'account',
+            'Created Account',
+            "{$admin->first_name} {$admin->last_name} ({$admin->role}) created a new {$data['role']} account for {$user->first_name} {$user->last_name} ({$user->email})",
+            null,
+            ['target_user' => trim($user->first_name . ' ' . $user->last_name), 'role' => $data['role']]
+        );
+
         return response()->json([
             'message' => 'Account created successfully.',
             'account' => [
@@ -156,6 +168,17 @@ class AdminAccountController extends Controller
 
         $user->save();
 
+        $admin = $request->user();
+        ActivityLog::log(
+            $admin,
+            'account_updated',
+            'account',
+            'Updated Account',
+            "{$admin->first_name} {$admin->last_name} ({$admin->role}) updated account details for {$user->first_name} {$user->last_name} ({$user->email})",
+            null,
+            ['target_user' => trim($user->first_name . ' ' . $user->last_name), 'role' => $user->role]
+        );
+
         return response()->json([
             'message' => 'Account updated successfully.',
             'account' => [
@@ -178,6 +201,17 @@ class AdminAccountController extends Controller
         $user->is_active = ($request->input('status') === 'Active');
         $user->save();
 
+        $admin = $request->user();
+        ActivityLog::log(
+            $admin,
+            'account_status_changed',
+            'account',
+            'Updated Account Status',
+            "{$admin->first_name} {$admin->last_name} ({$admin->role}) changed status to " . ($user->is_active ? 'Active' : 'Suspended') . " for {$user->first_name} {$user->last_name} ({$user->email})",
+            null,
+            ['target_user' => trim($user->first_name . ' ' . $user->last_name), 'status' => $user->is_active ? 'Active' : 'Suspended']
+        );
+
         return response()->json([
             'message' => 'Account status updated.',
             'status'  => $user->is_active ? 'Active' : 'Suspended',
@@ -195,7 +229,21 @@ class AdminAccountController extends Controller
             return response()->json(['message' => 'You cannot delete your own admin account.'], 422);
         }
 
+        $targetName = trim($user->first_name . ' ' . $user->last_name);
+        $targetEmail = $user->email;
+        $targetRole = $user->role;
         $user->delete();
+
+        $admin = $request->user();
+        ActivityLog::log(
+            $admin,
+            'account_deleted',
+            'account',
+            'Deleted Account',
+            "{$admin->first_name} {$admin->last_name} ({$admin->role}) deleted {$targetRole} account for {$targetName} ({$targetEmail})",
+            null,
+            ['target_user' => $targetName, 'role' => $targetRole]
+        );
 
         return response()->json(['message' => 'Account deleted successfully.']);
     }

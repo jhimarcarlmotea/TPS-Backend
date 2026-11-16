@@ -2,11 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\Provider;
 use App\Models\ProviderAvailability;
+use App\Models\SlotHold;
 use Carbon\Carbon;
 use App\Models\BookingPayment;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class AdminScheduleController extends Controller
 {
@@ -91,66 +95,256 @@ class AdminScheduleController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'date' => ['required', 'date_format:Y-m-d', 'after_or_equal:today'],
-            'status'     => ['required', 'in:available,not_available'],
-            'start_time' => ['nullable', 'required_if:status,available', 'date_format:H:i'],
-            'end_time'   => ['nullable', 'required_if:status,available', 'date_format:H:i', 'after:start_time'],
+            'dates'      => ['sometimes', 'array', 'min:1'],
+            'dates.*'    => ['required', 'date_format:Y-m-d', 'after_or_equal:today'],
+            'date'       => ['required_without:dates', 'date_format:Y-m-d', 'after_or_equal:today'],
+            'status'     => ['required', 'in:available,blocked,not_available'],
+            'start_time' => ['nullable', 'required_if:status,available', 'required_if:status,blocked', 'date_format:H:i'],
+            'end_time'   => ['nullable', 'required_if:status,available', 'required_if:status,blocked', 'date_format:H:i', 'after:start_time'],
         ]);
 
+        $isBulk = array_key_exists('dates', $data);
+        $dates = array_values(array_unique($data['dates'] ?? [$data['date']]));
         $providerId = $this->providerId($request);
-        $dayStart = Carbon::parse($data['date'])->startOfDay();
-        $dayEnd   = Carbon::parse($data['date'])->endOfDay();
+        $created = DB::transaction(function () use ($data, $dates, $providerId, $request) {
+            foreach ($dates as $date) {
+                $dayStart = Carbon::parse($date)->startOfDay();
+                $dayEnd   = Carbon::parse($date)->endOfDay();
+                $base = ProviderAvailability::where('provider_id', $providerId)
+                    ->whereBetween('start_at', [$dayStart, $dayEnd]);
 
-        $base = ProviderAvailability::where('provider_id', $providerId)
-            ->whereBetween('start_at', [$dayStart, $dayEnd]);
+                if ($data['status'] === 'not_available') {
+                    continue;
+                }
 
-        // ---- Not available: sarado ang buong araw ----
-        if ($data['status'] === 'not_available') {
-            (clone $base)->delete();
+                $newStart = $date . ' ' . $data['start_time'] . ':00';
+                $newEnd   = $date . ' ' . $data['end_time'] . ':00';
 
-            $slot = ProviderAvailability::create([
-                'provider_id' => $providerId,
-                'start_at'    => $data['date'] . ' 00:00:00',
-                'end_at'      => $data['date'] . ' 23:59:00',
-                'status'      => 'unavailable',
-                'created_by_role' => $this->role,
-            ]);
+                if ($data['status'] === 'available') {
+                    $overlap = (clone $base)
+                        ->whereIn('status', ['available', 'unavailable'])
+                        ->where('start_at', '<', $newEnd)
+                        ->where('end_at', '>', $newStart)
+                        ->first();
 
-            return response()->json($this->format($slot), 201);
+                    if ($overlap) {
+                        $message = $overlap->status === 'unavailable'
+                            ? "The selected time overlaps a time marked not available on {$date}."
+                            : "The selected time overlaps an existing slot on {$date}.";
+                        throw ValidationException::withMessages(['dates' => $message]);
+                    }
+                    continue;
+                }
+
+                $coveredSlot = (clone $base)
+                    ->where('status', 'available')
+                    ->where('start_at', '<=', $newStart)
+                    ->where('end_at', '>=', $newEnd)
+                    ->exists();
+                if (!$coveredSlot) {
+                    throw ValidationException::withMessages([
+                        'dates' => "The selected not-available time must be inside an available slot on {$date}.",
+                    ]);
+                }
+
+                $blockOverlap = (clone $base)
+                    ->where('status', 'unavailable')
+                    ->where('start_at', '<', $newEnd)
+                    ->where('end_at', '>', $newStart)
+                    ->exists();
+                if ($blockOverlap) {
+                    throw ValidationException::withMessages([
+                        'dates' => "The selected time already overlaps a time marked not available on {$date}.",
+                    ]);
+                }
+
+                $hasBooking = BookingPayment::where('provider_id', $providerId)
+                    ->whereIn('status', ['to_verify', 'verified'])
+                    ->where('approval_status', '!=', 'declined')
+                    ->whereNull('cancelled_at')
+                    ->where('start_at', '<', $newEnd)
+                    ->where('end_at', '>', $newStart)
+                    ->exists();
+                if ($hasBooking) {
+                    throw ValidationException::withMessages([
+                        'dates' => "The selected time has an online appointment and cannot be blocked on {$date}.",
+                    ]);
+                }
+
+                $hasHold = SlotHold::active()
+                    ->where('provider_id', $providerId)
+                    ->overlapping($newStart, $newEnd)
+                    ->exists();
+                if ($hasHold) {
+                    throw ValidationException::withMessages([
+                        'dates' => "The selected time is currently held for an online booking on {$date}.",
+                    ]);
+                }
+            }
+
+            $slots = [];
+            foreach ($dates as $date) {
+                $dayStart = Carbon::parse($date)->startOfDay();
+                $dayEnd   = Carbon::parse($date)->endOfDay();
+                $base = ProviderAvailability::where('provider_id', $providerId)
+                    ->whereBetween('start_at', [$dayStart, $dayEnd]);
+
+                if ($data['status'] === 'not_available') {
+                    (clone $base)->delete();
+                    $slot = ProviderAvailability::create([
+                        'provider_id' => $providerId,
+                        'start_at'    => $date . ' 00:00:00',
+                        'end_at'      => $date . ' 23:59:00',
+                        'status'      => 'unavailable',
+                        'created_by_role' => $this->role,
+                    ]);
+                } elseif ($data['status'] === 'blocked') {
+                    $blockStart = Carbon::parse($date . ' ' . $data['start_time']);
+                    $blockEnd = Carbon::parse($date . ' ' . $data['end_time']);
+                    $availableSlot = (clone $base)
+                        ->where('status', 'available')
+                        ->where('start_at', '<=', $blockStart)
+                        ->where('end_at', '>=', $blockEnd)
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                    $availableStart = $availableSlot->start_at->copy();
+                    $availableEnd = $availableSlot->end_at->copy();
+                    $createdBy = $availableSlot->created_by_role;
+                    $availableSlot->delete();
+
+                    if ($availableStart->lt($blockStart)) {
+                        $slots[] = ProviderAvailability::create([
+                            'provider_id' => $providerId,
+                            'start_at' => $availableStart,
+                            'end_at' => $blockStart,
+                            'status' => 'available',
+                            'created_by_role' => $createdBy,
+                        ]);
+                    }
+
+                    $slot = ProviderAvailability::create([
+                        'provider_id' => $providerId,
+                        'start_at' => $blockStart,
+                        'end_at' => $blockEnd,
+                        'status' => 'unavailable',
+                        'created_by_role' => $this->role,
+                    ]);
+
+                    if ($blockEnd->lt($availableEnd)) {
+                        $slots[] = ProviderAvailability::create([
+                            'provider_id' => $providerId,
+                            'start_at' => $blockEnd,
+                            'end_at' => $availableEnd,
+                            'status' => 'available',
+                            'created_by_role' => $createdBy,
+                        ]);
+                    }
+
+                    $u = $request->user();
+                    ActivityLog::log(
+                        $u,
+                        'schedule_blocked',
+                        'schedule',
+                        'Blocked Schedule Time',
+                        "{$u->first_name} {$u->last_name} ({$u->role}) marked {$date} {$data['start_time']} - {$data['end_time']} not available for a walk-in patient",
+                        null,
+                        ['date' => $date, 'start_time' => $data['start_time'], 'end_time' => $data['end_time']]
+                    );
+                } else {
+                    $slot = ProviderAvailability::create([
+                        'provider_id' => $providerId,
+                        'start_at'    => $date . ' ' . $data['start_time'] . ':00',
+                        'end_at'      => $date . ' ' . $data['end_time'] . ':00',
+                        'status'      => 'available',
+                        'created_by_role' => $this->role,
+                    ]);
+
+                    $u = $request->user();
+                    ActivityLog::log(
+                        $u,
+                        'schedule_created',
+                        'schedule',
+                        'Added Schedule Slot',
+                        "{$u->first_name} {$u->last_name} ({$u->role}) added an available schedule slot on {$date} {$data['start_time']} - {$data['end_time']}",
+                        null,
+                        ['date' => $date, 'start_time' => $data['start_time'], 'end_time' => $data['end_time']]
+                    );
+                }
+
+                $slots[] = $slot;
+            }
+
+            return $slots;
+        });
+
+        $formatted = array_map(fn ($slot) => $this->format($slot), $created);
+        return $isBulk || $data['status'] === 'blocked'
+            ? response()->json(['slots' => $formatted], 201)
+            : response()->json($formatted[0], 201);
+    }
+
+    public function restoreBlockedTime(Request $request, $id)
+    {
+        $slot = ProviderAvailability::where('provider_id', $this->providerId($request))
+            ->findOrFail($id);
+
+        if ($slot->start_at->lt(Carbon::today())) {
+            return response()->json(['message' => 'Past dates cannot be changed.'], 422);
         }
 
-        // ---- Available: pwedeng maraming slots sa isang araw ----
-        if ((clone $base)->where('status', 'unavailable')->exists()) {
-            return response()->json([
-                'message' => 'This day is marked not available. Remove that first to add times.',
-            ], 422);
+        if ($slot->status !== 'unavailable'
+            || ($slot->start_at->format('H:i') === '00:00' && $slot->end_at->format('H:i') === '23:59')) {
+            return response()->json(['message' => 'Only a blocked time slot can be restored.'], 422);
         }
 
-        $newStart = $data['date'] . ' ' . $data['start_time'] . ':00';
-        $newEnd   = $data['date'] . ' ' . $data['end_time'] . ':00';
+        $restored = DB::transaction(function () use ($slot, $request) {
+            $slot = ProviderAvailability::where('provider_id', $slot->provider_id)
+                ->lockForUpdate()
+                ->findOrFail($slot->id);
+            $start = $slot->start_at->copy();
+            $end = $slot->end_at->copy();
+            $mergedIds = [$slot->id];
 
-        // Bawal mag-overlap sa existing slot
-        $overlap = (clone $base)
-            ->where('status', 'available')
-            ->where('start_at', '<', $newEnd)
-            ->where('end_at', '>', $newStart)
-            ->exists();
+            do {
+                $previousStart = $start->copy();
+                $previousEnd = $end->copy();
+                $adjacent = ProviderAvailability::where('provider_id', $slot->provider_id)
+                    ->where('status', 'available')
+                    ->whereDate('start_at', $slot->start_at->toDateString())
+                    ->where('start_at', '<=', $end)
+                    ->where('end_at', '>=', $start)
+                    ->lockForUpdate()
+                    ->get();
 
-        if ($overlap) {
-            return response()->json([
-                'message' => 'This time overlaps with a slot you already saved for this day.',
-            ], 422);
-        }
+                foreach ($adjacent as $available) {
+                    $mergedIds[] = $available->id;
+                    if ($available->start_at->lt($start)) $start = $available->start_at->copy();
+                    if ($available->end_at->gt($end)) $end = $available->end_at->copy();
+                }
+            } while (!$start->equalTo($previousStart) || !$end->equalTo($previousEnd));
 
-        $slot = ProviderAvailability::create([
-            'provider_id' => $providerId,
-            'start_at'    => $newStart,
-            'end_at'      => $newEnd,
-            'status'      => 'available',
-            'created_by_role' => $this->role,
-        ]);
+            ProviderAvailability::whereIn('id', array_diff(array_unique($mergedIds), [$slot->id]))->delete();
+            $slot->forceFill([
+                'start_at' => $start,
+                'end_at' => $end,
+                'status' => 'available',
+            ])->save();
 
-        return response()->json($this->format($slot), 201);
+            $u = $request->user();
+            ActivityLog::log(
+                $u,
+                'schedule_restored',
+                'schedule',
+                'Restored Schedule Time',
+                "{$u->first_name} {$u->last_name} ({$u->role}) restored availability on {$start->format('M d, Y h:i A')} - {$end->format('h:i A')}",
+                null,
+                ['start_at' => $start->toIso8601String(), 'end_at' => $end->toIso8601String()]
+            );
+
+            return $slot;
+        });
+
+        return response()->json(['slot' => $this->format($restored)]);
     }
 
     // DELETE /api/admin/schedule/slots/{id}
@@ -163,7 +357,18 @@ class AdminScheduleController extends Controller
         return response()->json(['message' => 'Past dates cannot be changed.'], 422);
     }
 
+    $u = $request->user();
+    $slotTime = $slot->start_at->format('M d, Y h:i A');
     $slot->delete();
+
+    ActivityLog::log(
+        $u,
+        'schedule_deleted',
+        'schedule',
+        'Deleted Schedule Slot',
+        "{$u->first_name} {$u->last_name} ({$u->role}) deleted schedule slot on {$slotTime}",
+        null
+    );
 
     return response()->json(['message' => 'Deleted']);
 }

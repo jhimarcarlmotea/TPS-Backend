@@ -25,6 +25,7 @@ class HomeContentController extends Controller
             'hero.headline'      => 'required|string|max:200',
             'hero.highlight'     => 'nullable|string|max:120',
             'hero.subtext'       => 'nullable|string|max:500',
+            'hero.photo'         => 'nullable|string|max:500',
             'hero.ctaLabel'      => 'required|string|max:60',
             'hero.linkLabel'     => 'nullable|string|max:60',
 

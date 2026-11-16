@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use App\Models\BookingPayment;
 use App\Models\SlotHold;
 use App\Models\User;
@@ -149,6 +150,17 @@ private function consentLookup($rows)
                 'cancel_reason' => $reason,
             ])->save();
 
+            $user = $request->user();
+            ActivityLog::log(
+                $user,
+                'appointment_cancelled',
+                'appointment',
+                'Cancelled Appointment',
+                "Client {$user->first_name} {$user->last_name} cancelled appointment (Ref: {$p->reference}). Reason: " . ($reason ?: 'No reason specified'),
+                $p->reference,
+                ['client_name' => trim($user->first_name . ' ' . $user->last_name), 'reason' => $reason]
+            );
+
               return response()->json(['appointment' => $this->format($p, $this->psychLookup(collect([$p])), $this->consentLookup(collect([$p])))]);
         });
     }
@@ -223,6 +235,19 @@ private function consentLookup($rows)
             ])->save();
 
             $hold->delete();
+
+            ActivityLog::log(
+                $user,
+                'appointment_rescheduled',
+                'appointment',
+                'Rescheduled Appointment',
+                "Client {$user->first_name} {$user->last_name} rescheduled appointment (Ref: {$p->reference}) to " . $p->start_at->format('M d, Y h:i A'),
+                $p->reference,
+                [
+                    'client_name' => trim($user->first_name . ' ' . $user->last_name),
+                    'new_start'   => $p->start_at->toIso8601String(),
+                ]
+            );
 
               return response()->json(['appointment' => $this->format($p, $this->psychLookup(collect([$p])), $this->consentLookup(collect([$p])))]);
         });

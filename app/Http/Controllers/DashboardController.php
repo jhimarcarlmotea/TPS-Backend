@@ -7,6 +7,7 @@ use App\Models\ClientProfile;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
@@ -25,8 +26,7 @@ class DashboardController extends Controller
         $q = BookingPayment::query()->where('status', '!=', 'rejected');
 
         if ($user->role === 'AFFILIATE') {
-            return $q->where('service_id', 'psychotherapy')
-                ->where('psychologist_user_id', $user->id);
+            return $q->where('psychologist_user_id', $user->id);
         }
 
         return $q->where(function ($w) use ($user) {
@@ -80,6 +80,18 @@ class DashboardController extends Controller
         return '₱' . number_format($n, $n == floor($n) ? 0 : 2);
     }
 
+    private function serviceCategory(string $serviceId, array $serviceNames): ?string
+    {
+        $name = $serviceNames[$serviceId] ?? $serviceId;
+        $normalized = strtolower(preg_replace('/[^a-z0-9]/i', '', $name));
+
+        if (str_contains($normalized, 'psychotherapy')) return 'psychotherapy';
+        if (str_contains($normalized, 'aba')) return 'aba';
+        if (str_contains($normalized, 'assessment')) return 'assessment';
+
+        return null;
+    }
+
     // GET /api/admin/dashboard
     public function index(Request $request)
     {
@@ -90,13 +102,16 @@ class DashboardController extends Controller
         $from = now()->startOfMonth()->subMonths(11);
 
         // ---------- Income ng buong clinic (verified payments lang) ----------
-        $paid = BookingPayment::where('status', 'verified')
+        $paidQuery = BookingPayment::where('status', 'verified')
             ->where('approval_status', '!=', 'declined')
             ->where(function ($q) use ($from) {
                 $q->where('reviewed_at', '>=', $from)
                   ->orWhere(fn ($w) => $w->whereNull('reviewed_at')->where('created_at', '>=', $from));
-            })
-            ->get(['amount_paid', 'service_id', 'reviewed_at', 'created_at']);
+            });
+        if ($user->role === 'AFFILIATE') {
+            $paidQuery->where('psychologist_user_id', $user->id);
+        }
+        $paid = $paidQuery->get(['amount_paid', 'service_id', 'reviewed_at', 'created_at']);
 
         $incomeByMonth = $paid
             ->groupBy(fn ($p) => ($p->reviewed_at ?? $p->created_at)->format('Y-m'))
@@ -112,9 +127,12 @@ class DashboardController extends Controller
 
         // Income ngayong buwan kada service
         $thisMonth = $paid->filter(fn ($p) => ($p->reviewed_at ?? $p->created_at)->format('Y-m') === $cur);
+        $serviceNames = DB::table('services')->pluck('name', 'slug')->all();
         $services  = [];
         foreach (self::SERVICE_NAMES as $id => $name) {
-            $rows = $thisMonth->where('service_id', $id);
+            $rows = $thisMonth->filter(
+                fn ($p) => $this->serviceCategory($p->service_id, $serviceNames) === $id
+            );
             $services[] = [
                 'id'       => $id,
                 'name'     => $name,

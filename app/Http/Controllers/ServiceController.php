@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -181,6 +182,19 @@ class ServiceController extends Controller
         $all = $this->loadAll();
         $created = collect($all)->firstWhere('slug', $slug);
 
+        $admin = $request->user();
+        if ($admin) {
+            ActivityLog::log(
+                $admin,
+                'service_created',
+                'service',
+                'Created Service',
+                "{$admin->first_name} {$admin->last_name} ({$admin->role}) created new service: {$data['name']}",
+                null,
+                ['service_name' => $data['name'], 'slug' => $slug]
+            );
+        }
+
         return response()->json(['service' => $created], 201);
     }
 
@@ -222,6 +236,20 @@ class ServiceController extends Controller
         // Re-fetch and return the updated service
         $all = $this->loadAll();
         $updated = collect($all)->firstWhere('slug', $slug);
+
+        $admin = $request->user();
+        if ($admin) {
+            $sName = $updated['name'] ?? $service->name;
+            ActivityLog::log(
+                $admin,
+                'service_updated',
+                'service',
+                'Updated Service',
+                "{$admin->first_name} {$admin->last_name} ({$admin->role}) updated service: {$sName}",
+                null,
+                ['service_name' => $sName, 'slug' => $slug]
+            );
+        }
 
         return response()->json(['service' => $updated]);
     }
@@ -289,6 +317,19 @@ class ServiceController extends Controller
             Storage::disk('public')->delete($service->image_path);
         }
         DB::table('service_prices')->where('service_id', $slug)->delete();
+
+        $admin = request()?->user();
+        if ($admin) {
+            ActivityLog::log(
+                $admin,
+                'service_deleted',
+                'service',
+                'Deleted Service',
+                "{$admin->first_name} {$admin->last_name} ({$admin->role}) deleted service: {$service->name}",
+                null,
+                ['service_name' => $service->name, 'slug' => $slug]
+            );
+        }
 
         return response()->json(['message' => 'Service deleted successfully.']);
     }
