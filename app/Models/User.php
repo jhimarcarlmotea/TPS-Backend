@@ -23,18 +23,26 @@ class User extends Authenticatable
         'phone',
         'background',
         'password',
+        'login_provider',
         'google_id',
         'facebook_id',
+        'avatar_path',
         'verification_code',
         'verification_expires_at',
         'email_verified_at',
+        'pending_email',
+        'pending_email_code',
+        'pending_email_expires_at',
+        'pending_email_attempts',
         'role',
+        'is_active',
     ];
 
     protected $hidden = [
         'password',
         'verification_code',
         'verification_expires_at',
+        'pending_email_code',
     ];
 
     protected function avatarUrl(): Attribute

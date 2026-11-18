@@ -33,6 +33,14 @@ class AuthController extends Controller
             return response()->json(['message' => 'This account has been disabled.'], 403);
         }
 
+        if (empty($user->email_verified_at)) {
+            return response()->json([
+                'needs_verification' => true,
+                'email' => $user->email,
+                'message' => 'Please verify your email before continuing.',
+            ], 403);
+        }
+
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -60,6 +68,7 @@ class AuthController extends Controller
             'password'   => Hash::make($data['password']),
             'role'       => 'CLIENT',
             'login_provider' => 'SYSTEM',
+            'email_verified_at' => now(),
             'is_active'  => 1,
         ]);
 
