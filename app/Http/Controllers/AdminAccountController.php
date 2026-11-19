@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ActivityLog;
 use App\Models\User;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -20,6 +21,16 @@ class AdminAccountController extends Controller
      */
     public function index(Request $request)
     {
+        $user = $request->user();
+        $identity = serialize([
+            'viewer' => [$user->role, $user->id],
+            'role' => $request->input('role', 'All'),
+            'q' => trim((string) $request->input('q', '')),
+            'page' => max(1, (int) $request->input('page', 1)),
+            'per_page' => max(1, min(50, (int) $request->input('per_page', 10))),
+        ]);
+
+        return response()->json(TpsCache::remember('accounts', 'index:' . $identity, 60, function () use ($request) {
         $query = User::query();
         $roleCounts = User::query()
             ->selectRaw('role, COUNT(*) as count')
@@ -67,7 +78,7 @@ class AdminAccountController extends Controller
             ];
         });
 
-        return response()->json([
+        return [
             'accounts' => $accounts,
             'meta'     => [
                 'current_page' => $paginator->currentPage(),
@@ -81,7 +92,8 @@ class AdminAccountController extends Controller
                 'Affiliate' => (int) ($roleCounts['AFFILIATE'] ?? 0),
                 'Admin'     => (int) ($roleCounts['ADMIN'] ?? 0),
             ],
-        ]);
+        ];
+        }));
     }
 
     /**

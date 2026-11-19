@@ -55,7 +55,7 @@ def test_not_fit_partially_outside():
 
 
 def test_not_fit_across_gap():
-    # kalahati sa isa, kalahati sa isa pa -> hindi kasya
+    # Half on one and half on the other -> not enough.
     assert not fits(h(11), h(14), [(h(9), h(12)), (h(13), h(17))])
 
 

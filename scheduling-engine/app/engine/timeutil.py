@@ -4,12 +4,12 @@ T = 1440 * D + m   (D = day index, m = minute of day, 0..1439)
 """
 from datetime import date, timedelta
 
-EPOCH = date(2000, 1, 1)   # fixed reference para laging pareho ang day index
+EPOCH = date(2000, 1, 1)   # Fixed reference so the day index is always the same
 
 
 def to_minutes(date_str: str, time_str: str) -> int:
     """('2026-10-14', '09:30') -> minutes since EPOCH."""
-    d = date.fromisoformat(date_str)            # raises ValueError kung mali
+    d = date.fromisoformat(date_str)            # Raises ValueError if invalid
     parts = time_str.split(":")
     if len(parts) != 2 or not all(p.isdigit() for p in parts):
         raise ValueError(f"Invalid time (use 24-hour HH:MM): {time_str!r}")

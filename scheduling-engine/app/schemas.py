@@ -17,7 +17,7 @@ Role = Literal["ADMIN_PSYCHOLOGIST", "AFFILIATE"]
 BookingStatus = Literal["HELD", "PAID", "CONFIRMED"]
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")           # 24-hour HH:MM lang
+_TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")           # 24-hour HH:MM only
 
 
 def _valid_date(v: str) -> str:
@@ -77,8 +77,8 @@ class ActiveBookingIn(Strict):
     date: str
     start: str
     end: str
-    pinned_provider_id: Optional[str] = None                # PC lang
-    assigned_admin_id: Optional[str] = None                 # ABA/AC lang (kappa)
+    pinned_provider_id: Optional[str] = None                # PC only
+    assigned_admin_id: Optional[str] = None                 # ABA/AC only (assigned Admin ID)
     status: BookingStatus
 
     _d = field_validator("date")(classmethod(lambda cls, v: _valid_date(v)))
@@ -92,6 +92,7 @@ class CandidateIn(Strict):
     start: str
     end: str
     pinned_provider_id: Optional[str] = None
+    duration_minutes: Optional[int] = Field(default=None, ge=1, le=480)
 
     _d = field_validator("date")(classmethod(lambda cls, v: _valid_date(v)))
     _s = field_validator("start", "end")(classmethod(lambda cls, v: _valid_time(v)))
@@ -146,7 +147,7 @@ class Stage1Out(BaseModel):
 class RecommendationOut(BaseModel):
     rank: Optional[int] = None
     tier: Optional[str] = None
-    provider_id: Optional[str] = None                       # laging None para sa ABA/AC
+    provider_id: Optional[str] = None                       # Always None for ABA/AC
     date: Optional[str] = None
     start: Optional[str] = None
     end: Optional[str] = None
@@ -172,5 +173,5 @@ class SolveResponse(BaseModel):
     stage1: Optional[Stage1Out] = None
     recommendations: List[RecommendationOut] = []
     invalid: List[InvalidItem] = []
-    reason: Optional[str] = None                            # para sa SOLVER_LIMIT / SOLVER_ERROR
+    reason: Optional[str] = None                            # Used for SOLVER_LIMIT / SOLVER_ERROR
     metrics: MetricsOut

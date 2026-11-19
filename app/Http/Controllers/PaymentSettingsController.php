@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\PaymentMethod;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -13,8 +14,11 @@ class PaymentSettingsController extends Controller
     public const FULL_ONLY = ['aba'];
 
     // GET /api/admin/payment-settings
-    public function show()
+    public function show(Request $request)
     {
+        $identity = 'admin:' . $request->user()->id;
+
+        return response()->json(TpsCache::remember('catalog', 'payment-settings:' . $identity, 60, function () {
         $settings = DB::table('payment_settings')->first();
         $storedPrices = DB::table('service_prices')->pluck('price', 'service_id');
 
@@ -57,7 +61,7 @@ class PaymentSettingsController extends Controller
             $assessmentPricesOut[(string) $at['id']] = $at['price'];
         }
 
-        return response()->json([
+        return [
             'downpayment_percent' => (int) ($settings->downpayment_percent ?? 50),
             'psychotherapy_downpayment_amount' => (float) ($settings->psychotherapy_downpayment_amount ?? 750),
             'assessment_downpayment_amount' => (float) ($settings->assessment_downpayment_amount ?? 750),
@@ -69,7 +73,8 @@ class PaymentSettingsController extends Controller
             'full_only'           => self::FULL_ONLY,
             'methods'             => PaymentMethod::orderBy('sort')->orderBy('id')->get()
                 ->map(fn ($m) => $m->toArrayPublic())->values(),
-        ]);
+        ];
+        }));
     }
 
     // PUT /api/admin/payment-settings
@@ -108,6 +113,7 @@ class PaymentSettingsController extends Controller
                 'note'                => $data['note'] ?? null,
                 'updated_at'          => $now,
             ]);
+            TpsCache::invalidate('catalog');
         } else {
             DB::table('payment_settings')->insert([
                 'downpayment_percent' => $data['downpayment_percent'],
@@ -117,6 +123,7 @@ class PaymentSettingsController extends Controller
                 'created_at'          => $now,
                 'updated_at'          => $now,
             ]);
+            TpsCache::invalidate('catalog');
         }
 
         // Save service prices
@@ -127,6 +134,7 @@ class PaymentSettingsController extends Controller
                     ['service_id' => $serviceSlug],
                     ['price' => (float) $priceVal, 'updated_at' => $now, 'created_at' => $now]
                 );
+                TpsCache::invalidate('catalog');
             }
         }
 
@@ -139,10 +147,11 @@ class PaymentSettingsController extends Controller
                         'price'      => (float) $priceVal,
                         'updated_at' => $now,
                     ]);
+                TpsCache::invalidate('catalog');
             }
         }
 
-        return $this->show();
+        return $this->show($request);
     }
 
     private function saveQr(string $dataUrl): ?string
@@ -168,7 +177,7 @@ class PaymentSettingsController extends Controller
         $m = PaymentMethod::create([
             'name'    => trim($data['name']),
             'letter'  => strtoupper(mb_substr(trim($data['name']), 0, 1)),
-            'enabled' => false, // hindi pa kumpleto ang details
+            'enabled' => false, // Details are not complete yet.
             'sort'    => (int) PaymentMethod::max('sort') + 1,
         ]);
 

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use App\Support\TpsCache;
 
 class BookingPayment extends Model
 {
@@ -25,12 +26,28 @@ class BookingPayment extends Model
         'approved_at'  => 'datetime',
         'completed_at' => 'datetime',
         'flow_done_at' => 'datetime',
+        'reminder_sent_at' => 'datetime',
+        'one_hour_reminder_sent_at' => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        $invalidate = static function (): void {
+            DB::afterCommit(static fn () => TpsCache::invalidate(
+                'appointments',
+                'dashboard',
+                'schedule',
+            ));
+        };
+
+        static::saved($invalidate);
+        static::deleted($invalidate);
+    }
+
     /**
-     * I-mark na completed (completed_at = end_at) ang lahat ng APPROVED na appointment
-     * na lumipas na ang oras sa Asia/Manila. Idempotent: ligtas tawagin kahit ilang beses.
-     * Returns: bilang ng na-update.
+     * Mark all APPROVED appointments whose end time has passed in Asia/Manila as completed (completed_at = end_at).
+     * Idempotent: safe to call any number of times.
+     * Returns the number of updated rows.
      */
     public static function completeEnded(): int
     {
@@ -38,11 +55,17 @@ class BookingPayment extends Model
         // even if APP_TIMEZONE was left at UTC.
         $nowManila = now('Asia/Manila')->format('Y-m-d H:i:s');
 
-        return static::query()
+        $updated = static::query()
             ->where('approval_status', 'approved')
             ->whereNull('completed_at')
             ->whereNull('cancelled_at')
             ->where('end_at', '<=', $nowManila)
             ->update(['completed_at' => DB::raw('end_at')]);
+
+        if ($updated > 0) {
+            TpsCache::invalidate('appointments', 'dashboard', 'schedule');
+        }
+
+        return $updated;
     }
 }

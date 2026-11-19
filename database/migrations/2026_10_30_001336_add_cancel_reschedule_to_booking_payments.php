@@ -13,7 +13,7 @@ return new class extends Migration
             $t->string('cancel_reason')->nullable();
             $t->unsignedTinyInteger('reschedule_count')->default(0);
             $t->dateTime('rescheduled_at')->nullable();
-            $t->dateTime('original_start_at')->nullable(); // unang oras bago ang unang reschedule
+            $t->dateTime('original_start_at')->nullable(); // Original time before the first reschedule
         });
     }
 

@@ -8,11 +8,11 @@ use App\Models\SlotHold;
 use App\Models\User;
 use App\Models\BookingPayment;
 use App\Services\SchedulingEngineService;
+use App\Support\PublicStorageUrl;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 class BookingAvailabilityController extends Controller
 {
@@ -101,7 +101,7 @@ class BookingAvailabilityController extends Controller
             return Provider::whereIn('user_id', $users->pluck('id'))->pluck('id')->all();
         }
 
-        // ABA / Assessment: ADMIN lang
+        // ABA / Assessment: ADMIN only.
         $adminIds = User::where('role', 'ADMIN')->where('is_active', true)->pluck('id');
 
         return Provider::whereIn('user_id', $adminIds)->pluck('id')->all();
@@ -137,7 +137,7 @@ class BookingAvailabilityController extends Controller
         $out = collect();
 
         foreach ($avail as $a) {
-            // Laging 30-minute boundary ang start (9:00, 9:30, ...) kahit hindi aligned ang availability
+            // Always align starts to 30-minute boundaries (9:00, 9:30, ...), even if availability is not aligned.
             $cursor = $a->start_at->copy()->startOfMinute();
             if ($cursor->lt($a->start_at)) {
                 $cursor->addMinute();
@@ -249,7 +249,7 @@ class BookingAvailabilityController extends Controller
     }
 
     // GET /api/booking/psychologists?date=2026-10-14&start_time=09:00
-    // Schedule-first: psychologists na may bakante sa napiling date at oras
+    // Schedule-first: psychologists available on the selected date and time.
     public function psychologistsForSlot(Request $request)
     {
         $data = $request->validate([
@@ -281,7 +281,7 @@ class BookingAvailabilityController extends Controller
                 'name'       => trim($u->first_name . ' ' . $u->last_name),
                 'role'       => $u->role,
                 'avatar_url' => $u->avatar_url
-                    ?? ($u->avatar_path ? Storage::disk('public')->url($u->avatar_path) : null),
+                    ?? ($u->avatar_path ? PublicStorageUrl::fromPath((string) $u->avatar_path) : null),
             ])
             ->values();
 
@@ -305,11 +305,15 @@ class BookingAvailabilityController extends Controller
         }
         $data['service'] = $service->slug;
 
-        // Psychotherapy: kailangan na ng psychologist bago mag-hold
+        // Psychotherapy: a psychologist must be selected before placing a hold.
         $isPsychotherapy = $this->isPsychotherapy($data['service']);
         if ($isPsychotherapy && empty($data['psychologist_id'])) {
             return response()->json(['message' => 'Please choose a psychologist first.'], 422);
         }
+        $selectedPsychologistRole = $isPsychotherapy
+            ? User::whereKey($data['psychologist_id'])->where('is_active', true)->value('role')
+            : null;
+        $isAdminPsychotherapy = $isPsychotherapy && $selectedPsychologistRole === 'ADMIN';
 
         $assessmentType = null;
         if ($this->isAssessment($data['service']) && !empty($data['assessment_type_id'])) {
@@ -318,9 +322,11 @@ class BookingAvailabilityController extends Controller
 
         $user = $request->user();
         $dur  = $this->duration($data['service'], $data['assessment_type_id'] ?? null);
-        $ids  = $this->providerIds($data['service'], $data['psychologist_id'] ?? null);
+        $ids  = $isAdminPsychotherapy
+            ? $this->providerIds('aba', null)
+            : $this->providerIds($data['service'], $data['psychologist_id'] ?? null);
 
-        if (!empty($data['provider_id'])) {
+        if (!empty($data['provider_id']) && !$isAdminPsychotherapy) {
             $ids = array_values(array_intersect($ids, [(int) $data['provider_id']]));
         }
 
@@ -331,11 +337,36 @@ class BookingAvailabilityController extends Controller
         $dayStart = Carbon::parse($data['date'])->startOfDay();
         $dayEnd   = $dayStart->copy()->endOfDay();
 
-        return DB::transaction(function () use ($data, $user, $dur, $ids, $dayStart, $dayEnd, $assessmentType, $isPsychotherapy) {
+        return DB::transaction(function () use ($data, $user, $dur, $ids, $dayStart, $dayEnd, $assessmentType, $isPsychotherapy, $isAdminPsychotherapy) {
             Provider::whereIn('id', $ids)->lockForUpdate()->get();
 
-            $match = $this->candidates($ids, $dayStart, $dayEnd, $dur, $user->id)
-                ->first(fn ($c) => $c['start']->format('H:i') === $data['start_time']);
+            $matchingCandidates = $this->candidates($ids, $dayStart, $dayEnd, $dur, $user->id)
+                ->filter(fn ($c) => $c['start']->format('H:i') === $data['start_time']);
+
+            if ($isAdminPsychotherapy) {
+                $candidateProviderIds = $matchingCandidates->pluck('provider_id')->unique()->all();
+                $loads = BookingPayment::whereIn('provider_id', $candidateProviderIds)
+                    ->whereIn('status', ['to_verify', 'verified'])
+                    ->where('approval_status', '!=', 'declined')
+                    ->whereNull('cancelled_at')
+                    ->where('start_at', '>=', $dayStart)
+                    ->where('start_at', '<', $dayStart->copy()->addDay())
+                    ->selectRaw('provider_id, COUNT(*) as appointment_count')
+                    ->groupBy('provider_id')
+                    ->pluck('appointment_count', 'provider_id');
+
+                $orderedCandidates = $matchingCandidates->all();
+                usort($orderedCandidates, function ($left, $right) use ($loads) {
+                    $leftLoad = (int) ($loads[$left['provider_id']] ?? 0);
+                    $rightLoad = (int) ($loads[$right['provider_id']] ?? 0);
+
+                    return ($leftLoad <=> $rightLoad)
+                        ?: ((int) $left['provider_id'] <=> (int) $right['provider_id']);
+                });
+                $match = $orderedCandidates[0] ?? null;
+            } else {
+                $match = $matchingCandidates->first();
+            }
 
             if (!$match) {
                 return response()->json([
@@ -344,7 +375,6 @@ class BookingAvailabilityController extends Controller
             }
 
             // --- Scheduling-engine double-check (async advisory) ---
-            $matchProvider = Provider::find($match['provider_id']);
             $engineResult  = app(SchedulingEngineService::class)->solve(
                 serviceSlug: $data['service'],
                 date:        $data['date'],
@@ -379,7 +409,7 @@ class BookingAvailabilityController extends Controller
             // If engine is unreachable ($engineResult === null) or returns FEASIBLE, proceed normally.
             // -------------------------------------------------------
 
-            // --- ABA / Assessment: ang Admin na pinili ng ILP ang gagamitin (isa lang) ---
+            // --- ABA / Assessment: use the Admin selected by the ILP (one only) ---
             $holdProviderId = $match['provider_id'];
 
             if (!$isPsychotherapy && SchedulingEngineService::isFeasible($engineResult)) {
@@ -387,8 +417,8 @@ class BookingAvailabilityController extends Controller
 
                 if ($assigned !== null && $assigned !== (int) $holdProviderId
                     && in_array($assigned, array_map('intval', $ids), true)) {
-                    // Hindi alam ng engine ang holds ng ibang client, kaya tiyaking libre pa talaga
-                    // ang napiling Admin sa oras na ito bago gamitin.
+                    // The engine does not know about other clients' holds, so verify that
+                    // the selected Admin is still free at this time before using them.
                     $free = $this->candidates([$assigned], $dayStart, $dayEnd, $dur, $user->id)
                         ->contains(fn ($c) => $c['start']->format('H:i') === $data['start_time']);
 
@@ -439,9 +469,9 @@ class BookingAvailabilityController extends Controller
     }
 
     // GET /api/booking/recommendations?service=..&date=YYYY-MM-DD[&start_time=HH:MM][&psychologist_id=..][&assessment_type_id=..]
-    // History-based na mungkahing oras (Stage 2 ng engine).
-    //  - may start_time: ang oras na iyon ang sinusuri; kung hindi feasible, ibabalik ang alternatives.
-    //  - walang start_time: ang "usual" na oras ng client (galing sa huling completed session) ang sinusuri.
+    // History-based time suggestions (Stage 2 of the engine).
+    //  - With start_time: check that time; if infeasible, return alternatives.
+    //  - Without start_time: check the client's usual time (from their last completed session).
     public function recommendations(Request $request)
     {
         $data = $request->validate([
@@ -507,7 +537,7 @@ class BookingAvailabilityController extends Controller
         if (SchedulingEngineService::isNotFeasible($result)) {
             $recs = SchedulingEngineService::allRecommendations($result);
         } elseif (SchedulingEngineService::isFeasible($result)) {
-            // Bakante ang "usual" na oras sa petsang ito -> ito mismo ang mungkahi.
+            // The client's usual time is available on this date, so suggest it.
             $recs = [[
                 'rank'        => 1,
                 'tier'        => ($start->dayOfWeekIso === $history['weekday'] && $startTime === $history['start'])
@@ -518,13 +548,13 @@ class BookingAvailabilityController extends Controller
                 'end'         => $end->format('H:i'),
                 'status'      => 'RECOMMENDATION_FOUND',
             ]];
-            // Kung ang oras na ito ay hindi mismo ang usual ng client (may start_time na ipinasa), walang mungkahi.
+            // If this is not the client's usual time (start_time was provided), do not suggest it.
             if (!empty($data['start_time']) && $startTime !== $history['start']) {
                 $recs = [];
             }
         } else {
-            // Hindi COMPLETED: gamitin ang tunay na dahilan (invalid code / job_status).
-            // Huwag gamitin ang `reason` ng engine dito: maaaring "NO_HISTORY" iyon kahit hindi iyon ang totoong dahilan.
+            // Not COMPLETED: use the actual reason (invalid code / job_status).
+            // Do not use the engine's `reason` here: it may be "NO_HISTORY" even when that is not the actual reason.
             return $none($result['invalid'][0]['code'] ?? ($result['job_status'] ?? 'ENGINE_ERROR'));
         }
 

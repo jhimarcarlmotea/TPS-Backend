@@ -8,6 +8,7 @@ use App\Models\ProviderAvailability;
 use App\Models\SlotHold;
 use Carbon\Carbon;
 use App\Models\BookingPayment;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -58,7 +59,10 @@ class AdminScheduleController extends Controller
     {
         $data = $request->validate(['month' => ['required', 'date_format:Y-m']]);
         $providerId = $this->providerId($request);
+        $user = $request->user();
+        $identity = implode(':', [$user->role, $user->id, $providerId, $data['month']]);
 
+        return response()->json(TpsCache::remember('schedule', 'index:' . $identity, 30, function () use ($providerId, $data) {
         $start = Carbon::createFromFormat('!Y-m', $data['month'])->startOfMonth();
         $end   = $start->copy()->endOfMonth();
 
@@ -88,7 +92,8 @@ class AdminScheduleController extends Controller
             ->whereBetween('start_at', [$from, $to])->count(),
     ];
 
-        return response()->json(['slots' => $slots, 'stats' => $stats]);
+        return ['slots' => $slots, 'stats' => $stats];
+        }));
     }
 
     // POST /api/admin/schedule/slots

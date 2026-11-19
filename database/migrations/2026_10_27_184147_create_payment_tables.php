@@ -9,7 +9,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Downpayment % at note (isang row lang)
+        // Downpayment percentage and note (single row)
         Schema::create('payment_settings', function (Blueprint $t) {
             $t->id();
             $t->unsignedTinyInteger('downpayment_percent')->default(50);
@@ -17,14 +17,14 @@ return new class extends Migration
             $t->timestamps();
         });
 
-        // Presyo kada service
+        // Price per service
         Schema::create('service_prices', function (Blueprint $t) {
             $t->string('service_id', 50)->primary();
             $t->decimal('price', 10, 2)->default(0);
             $t->timestamps();
         });
 
-        // GCash, Maya, bank, atbp. (si admin lang ang nag-eedit)
+        // GCash, Maya, bank, etc. (editable only by an Admin)
         Schema::create('payment_methods', function (Blueprint $t) {
             $t->id();
             $t->string('name', 60);
@@ -39,13 +39,13 @@ return new class extends Migration
             $t->timestamps();
         });
 
-        // Bayad ng client (ito rin ang nagba-block ng slot pagkatapos ng hold)
+        // Client payment (also blocks the slot after a hold)
         Schema::create('booking_payments', function (Blueprint $t) {
             $t->id();
             $t->string('reference', 20)->unique();
             $t->unsignedInteger('user_id')->index();
             $t->unsignedBigInteger('provider_id')->nullable()->index();
-            $t->unsignedInteger('psychologist_user_id')->nullable()->index(); // psychotherapy lang
+            $t->unsignedInteger('psychologist_user_id')->nullable()->index(); // Psychotherapy only
             $t->string('service_id', 50);
             $t->dateTime('start_at');
             $t->dateTime('end_at');
@@ -66,7 +66,7 @@ return new class extends Migration
             $t->index(['provider_id', 'start_at', 'end_at']);
         });
 
-        // Default values (palitan ni admin sa Payment methods page)
+        // Default values (update these on the Payment Methods page)
         $now = now();
         DB::table('payment_settings')->insert(['downpayment_percent' => 50, 'note' => null, 'created_at' => $now, 'updated_at' => $now]);
 

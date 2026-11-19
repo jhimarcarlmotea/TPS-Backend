@@ -9,7 +9,7 @@ from typing import Optional
 
 # ---- Services ----
 PC, ABA, AC = "PC", "ABA", "AC"
-DURATION = {PC: 60, ABA: 120, AC: 60}      # d(service) sa minutes
+DURATION = {PC: 60, ABA: 120, AC: 60}      # Service duration in minutes
 
 # ---- Provider roles ----
 ADMIN, AFFILIATE = "ADMIN_PSYCHOLOGIST", "AFFILIATE"
@@ -69,8 +69,9 @@ class Booking:
     service: str                             # PC | ABA | AC
     start: int
     end: int
-    pinned: Optional[str] = None             # provider id kung PC; None kung ABA/AC
-    kappa: Optional[str] = None              # kasalukuyang admin ng ABA/AC (hidden sa client)
+    pinned: Optional[str] = None             # Provider ID for PC; None for ABA/AC
+    kappa: Optional[str] = None              # Current Admin for ABA/AC (hidden from the client)
+    duration_minutes: Optional[int] = None   # configured service duration for a candidate
 
 
 @dataclass(frozen=True)
@@ -110,7 +111,7 @@ class Stage1Result:
 class Recommendation:
     rank: int
     tier: str                                # HISTORY_MATCH | HISTORY_NEAR
-    provider_id: Optional[str]               # None para sa ABA/AC (hidden admin)
+    provider_id: Optional[str]               # None for ABA/AC (Admin is hidden)
     start: int
     end: int
 

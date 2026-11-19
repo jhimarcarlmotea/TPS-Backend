@@ -87,19 +87,81 @@ def test_candidate_takes_free_admin_without_reassigning(providers, cfg):
     assert r.assignment == {"x": "A1", "cand": "A2"}
 
 
+def test_candidate_prefers_fewest_appointments_on_requested_day(providers, cfg):
+    active = [
+        un("a1-1", AC, h(9), h(10), "A1"),
+        un("a1-2", AC, h(11), h(12), "A1"),
+        un("a1-3", AC, h(13), h(14), "A1"),
+        un("a2-1", AC, h(9), h(10), "A2"),
+    ]
+
+    r = stage1(Booking("cand", AC, h(10), h(11)), active, providers, cfg)
+
+    assert r.decision == FEASIBLE
+    assert r.assignment["cand"] == "A2"
+
+
+def test_candidate_load_counts_only_the_requested_day(providers, cfg):
+    other_day = 1440
+    providers[0] = dataclasses.replace(
+        providers[0], availability=((h(9), h(17)), (other_day + h(9), other_day + h(17)))
+    )
+    providers[1] = dataclasses.replace(
+        providers[1], availability=((h(9), h(17)), (other_day + h(9), other_day + h(17)))
+    )
+    active = [
+        un("a1-other-1", AC, other_day + h(9), other_day + h(10), "A1"),
+        un("a1-other-2", AC, other_day + h(11), other_day + h(12), "A1"),
+        un("a2-today", AC, h(9), h(10), "A2"),
+    ]
+
+    r = stage1(Booking("cand", AC, h(10), h(11)), active, providers, cfg)
+
+    assert r.decision == FEASIBLE
+    assert r.assignment["cand"] == "A1"
+
+
+def test_candidate_skips_overlapping_least_loaded_admin(providers, cfg):
+    active = [
+        un("a1-busy", AC, h(10), h(11), "A1"),
+        un("a2-before", AC, h(9), h(10), "A2"),
+        un("a2-after", AC, h(11), h(12), "A2"),
+    ]
+
+    r = stage1(Booking("cand", AC, h(10), h(11)), active, providers, cfg)
+
+    assert r.decision == FEASIBLE
+    assert r.assignment["cand"] == "A2"
+
+
+def test_candidate_duration_must_fit_configured_schedule(providers, cfg):
+    providers[0] = dataclasses.replace(providers[0], availability=((h(10), h(11)),))
+    providers[1] = dataclasses.replace(providers[1], availability=((h(9), h(11)),))
+
+    r = stage1(Booking("cand", ABA, h(9), h(11)), [], providers, cfg)
+
+    assert r.decision == FEASIBLE
+    assert r.assignment["cand"] == "A2"
+
+
+def test_candidate_requires_service_eligibility(providers, cfg):
+    providers[0] = dataclasses.replace(providers[0], eligible=frozenset({PC}))
+
+    r = stage1(Booking("cand", ABA, h(10), h(12)), [], providers, cfg)
+
+    assert r.decision == FEASIBLE
+    assert r.assignment["cand"] == "A2"
+
+
 def test_three_simultaneous_unpinned_is_infeasible(providers, cfg):
     active = [un("x", ABA, h(10), h(12), "A1"), un("y", ABA, h(10), h(12), "A2")]
     assert stage1(Booking("cand", ABA, h(10), h(12)), active, providers, cfg).decision == NOT_FEASIBLE
 
 
-def test_reassignment_frees_an_admin_and_tiebreak_prefers_lower_admin(providers, cfg):
-    """x: A1 9-10, y: A2 10-11. Bagong ABA 9-11 -> kailangang pagsamahin sina x at y sa iisang admin.
-    Dalawang paraan (Z*=1); tie-break piliin yung mas mababang admin: y A2 -> A1, ABA kay A2."""
+def test_candidate_cannot_be_assigned_by_reassigning_conflicting_appointments(providers, cfg):
     active = [un("x", AC, h(9), h(10), "A1"), un("y", AC, h(10), h(11), "A2")]
     r = stage1(Booking("cand", ABA, h(9), h(11)), active, providers, cfg)
-    assert r.decision == FEASIBLE and r.z_star == 1
-    assert r.reassignments == [("y", "A2", "A1")]
-    assert r.assignment["cand"] == "A2"
+    assert r.decision == NOT_FEASIBLE
 
 
 def test_deterministic(providers, cfg):
@@ -128,7 +190,7 @@ def brute_force(c, active, providers):
     inside = lambda b, p: any(s <= b.start and b.end <= f for s, f in raw[p])
 
     pinned = [b for b in active if b.pinned] + ([c] if c.pinned else [])
-    # pinned candidate: kasya at walang overlap sa ibang pinned ng provider
+    # Pinned candidate: fits and does not overlap another pinned booking for the provider.
     if c.pinned:
         if not inside(c, c.pinned):
             return (NOT_FEASIBLE, None)
@@ -142,6 +204,13 @@ def brute_force(c, active, providers):
         ok = True
         for b, adm in zip(U, combo):
             if not inside(b, adm) or any(p.pinned == adm and _overlap((p.start, p.end), (b.start, b.end)) for p in pinned):
+                ok = False
+                break
+            if b.id == c.id and c.pinned is None and any(
+                (other.pinned == adm if other.pinned is not None else other.kappa == adm)
+                and _overlap((other.start, other.end), (c.start, c.end))
+                for other in active
+            ):
                 ok = False
                 break
         if ok:

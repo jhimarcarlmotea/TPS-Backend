@@ -9,7 +9,7 @@ class Message extends Model
 {
     use HasFactory;
 
-    // Dito natin sinasabi kung anong mga columns ang pwedeng i-save
+    // Specify which columns may be saved.
     protected $fillable = [
         'sender_id',
         'receiver_id',
@@ -17,13 +17,13 @@ class Message extends Model
         'message',
     ];
 
-    // Relasyon: Ang isang message ay pagmamay-ari ng isang sender (User)
+    // Relationship: a message belongs to a sender (User).
     public function sender()
     {
         return $this->belongsTo(User::class, 'sender_id');
     }
 
-    // Relasyon: Ang isang message ay para sa isang receiver (User)
+    // Relationship: a message belongs to a receiver (User).
     public function receiver()
     {
         return $this->belongsTo(User::class, 'receiver_id');

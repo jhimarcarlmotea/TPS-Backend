@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 
 class MessageController extends Controller
 {
-    // Kunin ang history ng usapan
+    // Get the conversation history.
     public function index(Request $request)
     {
         $request->validate(['contact_id' => 'required']);
@@ -24,13 +24,13 @@ class MessageController extends Controller
 
         return response()->json($messages);
     }
-    // Kunin ang listahan ng lahat ng pwedeng kausapin (users)
+    // Get the list of all users who can be contacted.
     public function getContacts(Request $request)
 {
     $myId = $request->user()->id;
     
     $users = \App\Models\User::where('id', '!=', $myId)
-        ->select('id', 'first_name', 'last_name', 'role', 'avatar_path', 'phone') // <-- Tiyakin na may 'phone'
+        ->select('id', 'first_name', 'last_name', 'role', 'avatar_path', 'phone') // Ensure 'phone' is selected.
         ->get()
         ->map(function ($user) {
             return [
@@ -38,13 +38,13 @@ class MessageController extends Controller
                 'name' => $user->first_name . ' ' . $user->last_name,
                 'role' => $user->role,
                 'avatar' => $user->avatar_url ?: '/img/default-avatar.png',
-                'phone' => $user->phone, // <-- Dapat nasa array na ito
+                'phone' => $user->phone, // Include phone in the response.
             ];
         });
 
     return response()->json($users);
 }
-    // Mag-send ng bagong message
+    // Send a new message.
     public function store(Request $request)
     {
         $request->validate([
@@ -58,7 +58,7 @@ class MessageController extends Controller
             'message' => $request->message,
         ]);
 
-        // I-broadcast sa real-time
+        // Broadcast in real time.
         broadcast(new MessageSent($msg))->toOthers();
 
         return response()->json($msg->load('sender'));

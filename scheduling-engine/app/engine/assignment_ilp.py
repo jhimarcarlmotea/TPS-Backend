@@ -1,7 +1,8 @@
 """
-STAGE 1 — ILP admin assignment (minimum reassignment).
+STAGE 1 — ILP admin assignment.
 
-    min  Z = sum_{i in U_old} (1 - y[i, kappa_i])
+    ABA/AC candidate: eligible, conflict-free admins ranked by current-day load
+    PC candidate: minimize existing reassignment count
     s.t. C1  sum_a y[i,a] = 1                         (i in U)
          C3  y[i,a] = 0  kung [s_i,f_i) hindi kasya sa Λ'_a
          C4  sum_{i: s_i <= s_k < f_i} y[i,a] <= 1     (a in A, k in U)
@@ -18,6 +19,7 @@ from scipy.optimize import milp, LinearConstraint, Bounds
 from scipy.sparse import lil_matrix
 
 from .availability import net_availability, fits
+from .timeutil import day_of
 from .types import (Booking, Config, Stage1Result, ADMIN,
                     COMPLETED, SOLVER_LIMIT, SOLVER_ERROR, FEASIBLE, NOT_FEASIBLE,
                     OPTIMAL, FEASIBLE_NOT_PROVEN_OPTIMAL)
@@ -30,30 +32,64 @@ def _ms(t0: float) -> float:
 def stage1(c: Booking, active: list, providers: list, cfg: Config) -> Stage1Result:
     t0 = time.perf_counter()
 
-    # ---- 1. Hatiin ang bookings ------------------------------------------
+    # ---- 1. Split bookings -----------------------------------------------
     pinned_active = [b for b in active if b.pinned is not None]
     pinned_all = pinned_active + ([c] if c.pinned is not None else [])
     U_old = [b for b in active if b.pinned is None]
     U = U_old + ([c] if c.pinned is None else [])
-    admins = sorted(p.id for p in providers if p.role == ADMIN)     # fixed order
+    admin_providers = {p.id: p for p in providers if p.role == ADMIN}
+    admins = sorted(admin_providers)     # fixed order
     n_admin = len(admins)
 
-    # ---- 2. Pinned candidate: simple check lang (walang solver) ----------
-    # Kasya ba sa availability ng provider NA BAWAS ang IBANG pinned niya?
-    # (net_availability ng pinned_active lang, hindi kasama ang c)
+    # ---- 2. Pinned candidate: simple check (no solver) -------------------
+    # Does it fit the provider's availability AFTER removing their OTHER pinned bookings?
+    # (net_availability includes pinned_active only, not c)
     if c.pinned is not None:
         net_without_c = net_availability(providers, pinned_active)
         if not fits(c.start, c.end, net_without_c.get(c.pinned, [])):
             return Stage1Result(COMPLETED, NOT_FEASIBLE, runtime_ms=_ms(t0))
 
-    # ---- 3. Walang ABA/AC -> wala nang ililipat --------------------------
+    # ---- 3. No ABA/AC -> nothing to reassign ----------------------------
     if not U:
         return Stage1Result(COMPLETED, FEASIBLE, z_star=0, solver_status=OPTIMAL,
                             runtime_ms=_ms(t0))
     if n_admin == 0:
         return Stage1Result(COMPLETED, NOT_FEASIBLE, runtime_ms=_ms(t0))
 
-    # ---- 4. Net availability (kasama na ang c kung pinned) ---------------
+    # ABA/AC are assigned against existing, live assignments. Do not select an
+    # admin that would require moving an appointment the booking flow won't move.
+    if c.pinned is None:
+        net = net_availability(providers, pinned_active)
+        day_load = {adm: 0 for adm in admins}
+        candidate_day = day_of(c.start)
+        for b in active:
+            adm = b.pinned if b.pinned is not None else b.kappa
+            if adm in day_load and day_of(b.start) == candidate_day:
+                day_load[adm] += 1
+
+        available = []
+        for adm in admins:
+            provider = admin_providers[adm]
+            if c.service not in provider.eligible or not fits(c.start, c.end, net[adm]):
+                continue
+            if any(
+                (b.pinned if b.pinned is not None else b.kappa) == adm
+                and b.start < c.end and c.start < b.end
+                for b in active
+            ):
+                continue
+            available.append(adm)
+
+        if not available:
+            return Stage1Result(COMPLETED, NOT_FEASIBLE, runtime_ms=_ms(t0))
+
+        assigned_admin = min(available, key=lambda adm: (day_load[adm], adm))
+        assignment = {b.id: b.kappa for b in U_old}
+        assignment[c.id] = assigned_admin
+        return Stage1Result(COMPLETED, FEASIBLE, z_star=0, solver_status=OPTIMAL,
+                            assignment=assignment, runtime_ms=_ms(t0))
+
+    # ---- 4. Net availability (including c if pinned) --------------------
     net = net_availability(providers, pinned_all)
 
     # ---- 5. Sorting (determinism) ----------------------------------------
@@ -84,14 +120,14 @@ def stage1(c: Booking, active: list, providers: list, cfg: Config) -> Stage1Resu
         for a, adm in enumerate(admins):
             if not fits(b.start, b.end, net[adm]):
                 ub[idx(i, a)] = 0.0
-    # Early exit: may booking na walang kahit isang admin na pwede -> infeasible na agad
-    # (hindi na kailangan ng solver; malaking tipid sa Stage 2)
+    # Early exit: a booking has no eligible Admin -> immediately infeasible.
+    # (No need to run the solver; this saves significant time in Stage 2.)
     for i in range(n):
         if all(ub[idx(i, a)] == 0 for a in range(n_admin)):
             return Stage1Result(COMPLETED, NOT_FEASIBLE, runtime_ms=_ms(t0))
 
     # ---- 9. C4: capacity rows (dedupe) -----------------------------------
-    cap_rows = []                                   # list ng (a, [i, ...])
+    cap_rows = []                                   # list of (a, [i, ...])
     seen = set()
     for a in range(n_admin):
         for k in range(n):
@@ -147,7 +183,7 @@ def stage1(c: Booking, active: list, providers: list, cfg: Config) -> Stage1Resu
 
     z_star = reassigned(x)
 
-    # ---- 13. Tie-break (OPTIMAL lang): Z <= Z*, mas mababang admin number --
+    # ---- 13. Tie-break (OPTIMAL only): Z <= Z*, lower Admin number -------
     if solver_status == OPTIMAL:
         keep_row = np.zeros((1, nv))
         for i, b in enumerate(U):
@@ -168,7 +204,7 @@ def stage1(c: Booking, active: list, providers: list, cfg: Config) -> Stage1Resu
                 if reassigned(x2) <= z_star:
                     x = x2
         except Exception:
-            pass                                               # panatilihin ang unang sagot
+            pass                                               # Keep the first answer
 
     # ---- 14. Output --------------------------------------------------------
     assignment = {}

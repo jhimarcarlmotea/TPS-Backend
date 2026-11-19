@@ -3,17 +3,18 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use Illuminate\Support\Facades\Storage;
+use App\Support\PublicStorageUrl;
+use App\Support\TpsCache;
 
 class PsychologistController extends Controller
 {
     /**
-     * Public list ng lahat ng active na ADMIN at AFFILIATE
-     * para sa psychologist selection sa Book Session (Psychotherapy lang).
+     * Public list of all active ADMIN and AFFILIATE users
+     * for psychologist selection in Book Session (Psychotherapy only).
      */
     public function index()
     {
-        $psychologists = User::whereIn('role', ['ADMIN', 'AFFILIATE'])
+        $psychologists = TpsCache::remember('directory', 'psychologists:active', 300, fn () => User::whereIn('role', ['ADMIN', 'AFFILIATE'])
             ->where('is_active', true)
             ->orderBy('first_name')
             ->orderBy('last_name')
@@ -28,20 +29,21 @@ class PsychologistController extends Controller
                 'email'      => $u->email,
                 'phone'      => $u->phone,
                 'avatar_url' => $u->avatar_url
-                    ?? ($u->avatar_path ? Storage::disk('public')->url($u->avatar_path) : null),
+                    ?? ($u->avatar_path ? PublicStorageUrl::fromPath((string) $u->avatar_path) : null),
             ])
-            ->values();
+            ->values());
 
         return response()->json(['psychologists' => $psychologists]);
     }
 
     public function show($id)
     {
-        $u = User::whereIn('role', ['ADMIN', 'AFFILIATE'])
-            ->where('is_active', true)
-            ->findOrFail($id);
+        return response()->json(TpsCache::remember('directory', 'psychologist:' . (int) $id, 300, function () use ($id) {
+            $u = User::whereIn('role', ['ADMIN', 'AFFILIATE'])
+                ->where('is_active', true)
+                ->findOrFail($id);
 
-        return response()->json([
+            return [
             'psychologist' => [
                 'id'         => $u->id,
                 'first_name' => $u->first_name,
@@ -52,8 +54,9 @@ class PsychologistController extends Controller
                 'email'      => $u->email,
                 'phone'      => $u->phone,
                 'avatar_url' => $u->avatar_url
-                    ?? ($u->avatar_path ? Storage::disk('public')->url($u->avatar_path) : null),
+                    ?? ($u->avatar_path ? PublicStorageUrl::fromPath((string) $u->avatar_path) : null),
             ]
-        ]);
+            ];
+        }));
     }
 }

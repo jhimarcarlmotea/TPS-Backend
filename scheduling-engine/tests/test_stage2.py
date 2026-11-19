@@ -91,6 +91,18 @@ def test_case_b_not_feasible_history_match(providers, cfg):
     assert first.end == slot(16)
 
 
+def test_recommendations_preserve_configured_candidate_duration(providers, cfg):
+    active = [pc("b1", slot(9), slot(10), "A1"), pc("b2", slot(9), slot(10), "A2")]
+    candidate = Booking("c", ABA, slot(9), slot(10), duration_minutes=60)
+    history = HistoryPref(weekday=3, start_min=h(14))
+
+    result = check_and_recommend(candidate, active, providers, t_run=slot(8), cfg=cfg, history=history)
+
+    assert result.decision == NOT_FEASIBLE
+    assert result.recommendations[0].start == slot(14)
+    assert result.recommendations[0].end == slot(15)
+
+
 # ------------------------------------------------------------
 # Case C: Historical matching schedule is NOT_FEASIBLE but nearby historical alternatives are FEASIBLE
 # Expected: Return feasible alternatives classified as HISTORY_NEAR.

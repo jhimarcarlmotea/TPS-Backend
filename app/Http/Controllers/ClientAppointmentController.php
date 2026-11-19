@@ -8,10 +8,11 @@ use App\Models\SlotHold;
 use App\Models\User;
 use App\Models\ConsentForm;
 use App\Services\SchedulingEngineService;
+use App\Support\PublicStorageUrl;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 class ClientAppointmentController extends Controller
 {
@@ -31,7 +32,7 @@ class ClientAppointmentController extends Controller
             return 'completed';
         }
         if ($p->end_at->isPast()) {
-            return $p->approval_status === 'approved' ? 'completed' : 'cancelled'; // lumipas na at hindi na-approve
+            return $p->approval_status === 'approved' ? 'completed' : 'cancelled'; // The appointment elapsed without approval.
         }
         return 'upcoming';
     }
@@ -48,7 +49,7 @@ class ClientAppointmentController extends Controller
         return 'Pending approval';
     }
 
-    // Pwede lang mag-cancel/reschedule kung upcoming pa at hindi pa nagsisimula
+    // Cancellation/rescheduling is allowed only for upcoming appointments that have not started.
     private function canChange(BookingPayment $p): bool
     {
         return $this->tab($p) === 'upcoming' && $p->start_at->isFuture();
@@ -84,7 +85,7 @@ class ClientAppointmentController extends Controller
         'amount_paid'          => $p->amount_paid,
         'balance'              => $p->balance,
         'receipt_url'          => $p->receipt_path
-            ? Storage::disk('public')->url($p->receipt_path)
+            ? PublicStorageUrl::fromPath((string) $p->receipt_path)
             : null,
         'consent_status'       => !in_array($p->service_id, ['psychotherapy', 'aba'], true)
             ? 'not_required'
@@ -110,8 +111,12 @@ private function consentLookup($rows)
     public function index(Request $request)
     {
         BookingPayment::completeEnded();
+        $user = $request->user();
 
-        $rows = BookingPayment::where('user_id', $request->user()->id)
+        $identity = implode(':', [$user->role, $user->id]);
+
+        return response()->json(TpsCache::remember('appointments', 'client:index:' . $identity, 15, function () use ($user) {
+        $rows = BookingPayment::where('user_id', $user->id)
             ->where(function ($query) {
                 $query->where('approval_status', 'approved')
                     ->orWhere('status', 'rejected')
@@ -127,9 +132,10 @@ private function consentLookup($rows)
         $psychs   = $this->psychLookup($rows);
         $consents = $this->consentLookup($rows);
 
-        return response()->json([
+        return [
             'appointments' => $rows->map(fn ($p) => $this->format($p, $psychs, $consents))->values(),
-        ]);
+        ];
+        }));
     }
 
     // POST /api/my-appointments/{id}/cancel
@@ -229,9 +235,11 @@ private function consentLookup($rows)
                 'original_start_at' => $p->original_start_at ?? $p->start_at,
                 'start_at'          => $hold->start_at,
                 'end_at'            => $hold->end_at,
-                'provider_id'       => $hold->provider_id, // ABA/Assessment: pwedeng ibang admin
+                'provider_id'       => $hold->provider_id, // ABA/Assessment: a different Admin may be assigned.
                 'reschedule_count'  => $p->reschedule_count + 1,
                 'rescheduled_at'    => now(),
+                'reminder_sent_at'  => null,
+                'one_hour_reminder_sent_at' => null,
             ])->save();
 
             $hold->delete();

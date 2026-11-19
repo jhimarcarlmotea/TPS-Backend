@@ -6,10 +6,10 @@ use App\Models\BookingPayment;
 use App\Models\ClientProfile;
 use App\Models\ConsentForm;
 use App\Models\User;
+use App\Support\PublicStorageUrl;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Storage;
 
 class BookingConfirmationController extends Controller
 {
@@ -19,7 +19,7 @@ class BookingConfirmationController extends Controller
         'assessment'    => 'Assessment',
     ];
 
-    // Kapareho ng logic ng latest() sa BookingPaymentController
+    // Same logic as latest() in BookingPaymentController.
     private function stage(BookingPayment $p): string
     {   
         if ($p->cancelled_at) return 'CANCELLED';
@@ -29,7 +29,7 @@ class BookingConfirmationController extends Controller
         return 'PSYCHOLOGIST_PENDING';
     }
 
-    // Consent: hinahanap ang column na nag-uugnay sa booking. Kung wala, 'false'.
+    // Consent: find the column linking to the booking. If it is missing, return false.
     private function consentDone(BookingPayment $p): bool
     {
         return ($this->isPsychotherapy($p) || $p->service_id === 'aba')
@@ -53,7 +53,7 @@ class BookingConfirmationController extends Controller
         $data = $request->validate(['reference' => ['required', 'string', 'max:60']]);
         $user = $request->user();
 
-        // Ang may-ari lang ang makakakita
+        // Only the owner can view this.
         $p = BookingPayment::where('reference', $data['reference'])
             ->where('user_id', $user->id)
             ->first();
@@ -109,7 +109,7 @@ class BookingConfirmationController extends Controller
                     'balance'          => (float) $p->balance,
                     'total_fee'        => (float) $p->total_amount,
                     'receipt_url'      => $p->receipt_path
-                        ? Storage::disk('public')->url($p->receipt_path)
+                        ? PublicStorageUrl::fromPath((string) $p->receipt_path)
                         : null,
                 ],
                 'consent_required' => $isPsychotherapy || $p->service_id === 'aba',

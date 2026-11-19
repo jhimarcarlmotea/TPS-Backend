@@ -22,8 +22,8 @@ class MessageSent implements ShouldBroadcast
 
     public function broadcastOn(): array
     {
-        // Gumagawa tayo ng private channel para sa dalawang nag-uusap
-        // Ang format ay: chat.[id_ng_mas_mababa].[id_ng_mas_mataas]
+        // Create a private channel for the two participants.
+        // Format: chat.[lower_id].[higher_id]
         $ids = [$this->message->sender_id, $this->message->receiver_id];
         sort($ids);
         return [

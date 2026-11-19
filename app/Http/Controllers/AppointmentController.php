@@ -8,6 +8,7 @@ use App\Models\ClientProfile;
 use App\Models\ConsentForm;
 use App\Models\Provider;
 use App\Models\User;
+use App\Support\TpsCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -43,9 +44,9 @@ class AppointmentController extends Controller
     }
 
     /**
-     * Psychotherapy: psychologist na pinili lang ang makakakita.
-     * ABA / Assessment: ADMIN lang na naka-assign (provider_id ng booking).
-     * Hindi kasama ang rejected na payment.
+     * Psychotherapy: only the selected psychologist can view the appointment.
+     * ABA / Assessment: only the assigned ADMIN can view it (booking provider_id).
+     * Rejected payments are excluded.
      */
     private function scoped(User $user)
     {
@@ -57,8 +58,8 @@ class AppointmentController extends Controller
                 ->where('psychologist_user_id', $user->id);
         }
 
-        // ADMIN: psychotherapy na sila ang pinili, at ABA/Assessment na naka-assign
-        // sa KANYANG provider_id lang. Hindi niya makikita o magagalaw ang booking ng ibang Admin.
+        // ADMIN: psychotherapy assigned to them and ABA/Assessment assigned
+        // to their provider_id only. They cannot view or modify another Admin's booking.
         $providerId = Provider::where('user_id', $user->id)->value('id');
 
         return $q->where(function ($w) use ($user, $providerId, $psychotherapySlugs) {
@@ -183,8 +184,11 @@ private function unfinished($q)
 {
     BookingPayment::completeEnded();
 
-    $base = $this->scoped($request->user());
+    $user = $request->user();
+    $identity = implode(':', [$user->role, $user->id]);
 
+    return response()->json(TpsCache::remember('appointments', 'provider:index:' . $identity, 15, function () use ($user) {
+    $base = $this->scoped($user);
     $rows = $this->unfinished(clone $base)
         ->orderBy('start_at')
         ->limit(500)
@@ -192,27 +196,32 @@ private function unfinished($q)
 
     [$profiles, $users, $consents, $serviceNames] = $this->lookups($rows);
 
-    return response()->json([
+    return [
         'appointments'  => $rows->map(fn ($p) => $this->format($p, $profiles, $users, $consents, $serviceNames))->values(),
         'history_count' => $this->finished(clone $base)->count(),
-    ]);
+    ];
+    }));
 }
 
     // GET /api/{admin|affiliate}/appointments/history  (completed, declined, cancelled)
     public function history(Request $request)
     {
         BookingPayment::completeEnded();
+        $user = $request->user();
+        $identity = implode(':', [$user->role, $user->id]);
 
-        $rows = $this->finished($this->scoped($request->user()))
+        return response()->json(TpsCache::remember('appointments', 'provider:history:' . $identity, 15, function () use ($user) {
+        $rows = $this->finished($this->scoped($user))
             ->orderByDesc('start_at')
             ->limit(300)
             ->get();
 
         [$profiles, $users, $consents, $serviceNames] = $this->lookups($rows);
 
-        return response()->json([
+        return [
             'appointments' => $rows->map(fn ($p) => $this->format($p, $profiles, $users, $consents, $serviceNames))->values(),
-        ]);
+        ];
+        }));
     }
 
     // GET /api/{admin|affiliate}/appointments/{id}/consent

@@ -8,7 +8,17 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-// Kusang i-mark na completed ang approved appointments na tapos na ang oras (Asia/Manila).
+// Automatically mark approved appointments as completed after their end time (Asia/Manila).
 Schedule::command('appointments:complete-ended')
     ->everyMinute()
     ->timezone('Asia/Manila');
+
+Schedule::command('appointments:send-reminders')
+    ->everyMinute()
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping();
+
+Schedule::command('backups:run-scheduled')
+    ->everyMinute()
+    ->timezone(config('app.timezone'))
+    ->withoutOverlapping();

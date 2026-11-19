@@ -72,6 +72,20 @@ def test_example1_feasible_with_one_reassignment(client, H):
             b["metrics"]["candidate_checks"]) == (2, 3, 0)
 
 
+def test_candidate_uses_duration_configured_by_booking_service(client, H):
+    p = load("example2_not_feasible.json")
+    p["candidate"].update({"end": "10:00", "duration_minutes": 60})
+
+    r = client.post(URL, json=p, headers=H)
+
+    assert r.status_code == 200
+    body = r.json()
+    assert (body["job_status"], body["decision"]) == ("COMPLETED", "FEASIBLE")
+    assert {row["booking_id"]: row["admin_id"] for row in body["stage1"]["assignment"]}[
+        "cand_0002"
+    ] == "A2"
+
+
 def test_example2_not_feasible_with_recommendations(client, H):
     p = load("example2_not_feasible.json")
     p["history"] = {"weekday": 3, "start": "10:00"}
@@ -90,7 +104,7 @@ def test_example2_not_feasible_with_recommendations(client, H):
 
 
 def test_example2_not_feasible_without_history(client, H):
-    p = load("example2_not_feasible.json")  # walang history field
+    p = load("example2_not_feasible.json")  # no history field
     r = client.post(URL, json=p, headers=H)
     assert r.status_code == 200
     b = r.json()
@@ -103,7 +117,7 @@ def test_example2_not_feasible_without_history(client, H):
 def test_no_alternative_response_shape(client, H):
     p = load("example2_not_feasible.json")
     p["history"] = {"weekday": 3, "start": "08:00"}
-    p["config"]["max_candidate_checks"] = 1               # 08:00 lang ang masusubukan (labas sa 09:00 availability)
+    p["config"]["max_candidate_checks"] = 1               # only 08:00 can be tried (outside 09:00 availability)
     b = client.post(URL, json=p, headers=H).json()
     assert b["decision"] == "NOT_FEASIBLE"
     assert b["recommendations"] == [{"rank": None, "tier": None, "provider_id": None, "date": None,
@@ -113,10 +127,10 @@ def test_no_alternative_response_shape(client, H):
 # ------------------------------------------------------------------ errors
 def test_unknown_field_is_400(client, H):
     p = load("example1_feasible.json")
-    p["candidate"]["client_name"] = "Juan"                # bawal ang dagdag na field (at PII!)
+    p["candidate"]["client_name"] = "Juan"                # extra fields are forbidden (and this contains PII)
     r = client.post(URL, json=p, headers=H)
     assert r.status_code == 400 and r.json()["error"] == "INVALID_SCHEMA"
-    assert "Juan" not in r.text                           # hindi ini-echo ang input
+    assert "Juan" not in r.text                           # input is not echoed
 
 
 @pytest.mark.parametrize("bad", ["25:00", "9:00", "09:00:00", "12:00 PM"])
@@ -146,7 +160,7 @@ def test_payload_too_large_is_413(client, H):
 
 def test_wrong_end_time_is_invalid_candidate_not_http_error(client, H):
     p = load("example1_feasible.json")
-    p["candidate"]["end"] = "12:00"                       # PC dapat 60 minuto
+    p["candidate"]["end"] = "12:00"                       # PC duration must be 60 minutes
     r = client.post(URL, json=p, headers=H)
     assert r.status_code == 200
     b = r.json()
@@ -165,7 +179,7 @@ def test_aba_pinned_to_affiliate_is_invalid_candidate(client, H):
 
 def test_inconsistent_state_is_invalid_state(client, H):
     p = load("example1_feasible.json")
-    p["active_bookings"][1]["assigned_admin_id"] = None   # ABA/AC na walang admin
+    p["active_bookings"][1]["assigned_admin_id"] = None   # ABA/AC without an assigned Admin
     b = client.post(URL, json=p, headers=H).json()
     assert (b["job_status"], b["invalid"]) == ("INVALID", [{"code": "INVALID_STATE"}])
 

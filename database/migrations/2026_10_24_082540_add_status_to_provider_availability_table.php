@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('provider_availability', function (Blueprint $table) {
-            // 'available' = bukas para sa booking, 'unavailable' = sarado ang buong araw
+            // 'available' = open for booking, 'unavailable' = closed for the entire day
             $table->string('status', 20)->default('available')->after('end_at');
         });
     }

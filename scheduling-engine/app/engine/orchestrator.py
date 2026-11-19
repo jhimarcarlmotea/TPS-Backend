@@ -23,7 +23,7 @@ def check_and_recommend(c: Booking, active: list, providers: list,
     t0 = time.perf_counter()
     pmap = {p.id: p for p in providers}
 
-    # ---------- PART 0: validate (ayon sa ayos; huminto sa unang mali) ----------
+    # ---------- PART 0: validate in order; stop at the first error ----------
     reason = check_size(len(active), cfg)
     if reason is None:
         reason = check_candidate(c, pmap, t_run)
@@ -41,18 +41,19 @@ def check_and_recommend(c: Booking, active: list, providers: list,
                            runtime_ms=_ms(t0))
 
     # ---------- STAGE 2: History-based alternative recommendation ----------
-    # Kung walang history, laktawan ang Stage 2 at ibalik ang NO_HISTORY
+    # If there is no history, skip Stage 2 and return NO_HISTORY.
     if history is None:
         return CheckResult(COMPLETED, NOT_FEASIBLE, stage1=None,
                            recommendations=NO_HISTORY,
                            candidate_checks=0, runtime_ms=_ms(t0))
 
     recs, checks = [], 0
+    duration = c.duration_minutes if c.duration_minutes is not None else DURATION[c.service]
     for tier, provider, start in ordered_candidates(c, history, t_run, cfg, providers):
         checks += 1
-        c2 = replace(c, start=start, end=start + DURATION[c.service], pinned=provider)
+        c2 = replace(c, start=start, end=start + duration, pinned=provider)
         r2 = stage1(c2, active, providers, cfg)
-        # SOLVER_LIMIT / SOLVER_ERROR dito: i-skip lang (huwag i-recommend), pero bilang pa rin
+        # For SOLVER_LIMIT / SOLVER_ERROR, skip the recommendation but still count the result.
         if r2.job_status == COMPLETED and r2.decision == FEASIBLE:
             recs.append(Recommendation(len(recs) + 1, tier, provider, start, c2.end))
         if len(recs) == cfg.k_rec or checks == cfg.max_checks:

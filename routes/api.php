@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminBackupController;
 use App\Http\Controllers\AdminScheduleController;
 use App\Http\Controllers\AffiliateScheduleController;
 use App\Http\Controllers\AppointmentController;
@@ -99,6 +100,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Admin: payment settings, received payments, appointments
     Route::middleware('role:ADMIN')->prefix('admin')->group(function () {
+        Route::get('/backups', [AdminBackupController::class, 'index']);
+        Route::post('/backups', [AdminBackupController::class, 'store'])->middleware('throttle:5,1');
+        Route::get('/backups/settings', [AdminBackupController::class, 'settings']);
+        Route::put('/backups/settings', [AdminBackupController::class, 'updateSettings']);
+        Route::get('/backups/{id}/download', [AdminBackupController::class, 'download']);
+        Route::post('/backups/{id}/restore', [AdminBackupController::class, 'restore'])->middleware('throttle:3,1');
+
         Route::get('/payment-settings', [PaymentSettingsController::class, 'show']);
         Route::put('/payment-settings', [PaymentSettingsController::class, 'update']);
         Route::post('/payment-methods', [PaymentSettingsController::class, 'storeMethod']);
@@ -153,7 +161,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/activity-logs', [ActivityLogController::class, 'index']);
     });
 
-    // Affiliate: payments + appointments (walang settings)
+    // Affiliate: payments + appointments (no settings)
     Route::middleware('role:AFFILIATE')->prefix('affiliate')->group(function () {
         Route::get('/payments', [BookingPaymentController::class, 'index']);
         Route::post('/payments/{id}/verify', [BookingPaymentController::class, 'verify']);

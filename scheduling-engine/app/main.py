@@ -14,7 +14,7 @@ def health():
 
 @app.exception_handler(RequestValidationError)
 async def invalid_schema(request: Request, exc: RequestValidationError):
-    # HTTP 400 INVALID_SCHEMA. Walang echo ng input value (para walang tagas ng data).
+    # HTTP 400 INVALID_SCHEMA. Do not echo input values to avoid leaking data.
     details = [{"loc": [str(x) for x in e.get("loc", [])], "msg": e.get("msg", "")}
                for e in exc.errors()]
     return JSONResponse(status_code=400, content={"error": "INVALID_SCHEMA", "details": details})

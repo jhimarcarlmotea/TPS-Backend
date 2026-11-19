@@ -53,12 +53,12 @@ class AgoraController extends Controller
         $channelName = 'appointment-' . $appointment->id;
         $uid = $user->id;
 
-        // Gumawa ng token gamit ang bagong package
+        // Generate a token using the new package.
         $token = Agora::make($user->id)
             ->channel($channelName)
             ->uId($uid)
             ->join(false) // false = publisher (makakapag-video/audio)
-            ->audioOnly(false) // false = may video
+            ->audioOnly(false) // false = includes video
             ->token();
 
         return response()->json([

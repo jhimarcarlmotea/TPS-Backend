@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use App\Support\TpsCache;
 
 class ProviderAvailability extends Model
 {
@@ -14,4 +16,14 @@ class ProviderAvailability extends Model
         'start_at' => 'datetime',
         'end_at'   => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        $invalidate = static function (): void {
+            DB::afterCommit(static fn () => TpsCache::invalidate('schedule'));
+        };
+
+        static::saved($invalidate);
+        static::deleted($invalidate);
+    }
 }

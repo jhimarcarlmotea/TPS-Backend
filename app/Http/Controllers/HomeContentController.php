@@ -3,18 +3,22 @@
 namespace App\Http\Controllers;
 
 use App\Models\HomeContent;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
 class HomeContentController extends Controller
 {
-    // Public: kailangan din ng Client Site
+    // Public: also required by the client site.
     public function show()
     {
-        $row = HomeContent::where('key', 'home')->first();
+        $content = TpsCache::remember('website', 'home-content', 300, function () {
+            $row = HomeContent::where('key', 'home')->first();
 
-        // Walang laman pa -> {} lang; ang frontend na ang gagamit ng defaults
-        return response()->json($row?->content ?? new \stdClass());
+            return $row?->content ?? new \stdClass();
+        });
+
+        return response()->json($content);
     }
 
     // Admin only
@@ -55,7 +59,7 @@ class HomeContentController extends Controller
             'contact.facebookLabel' => 'nullable|string|max:120',
             'contact.hours'         => 'nullable|string|max:200',
 
-            // About page: headline, intro, at ang listahan ng tao (title, show/hide, order)
+            // About page: headline, intro, and member list (title, visibility, order)
             'about'                      => 'nullable|array',
             'about.headline'             => 'nullable|string|max:160',
             'about.intro'                => 'nullable|string|max:800',
@@ -67,7 +71,7 @@ class HomeContentController extends Controller
 
         $row = HomeContent::where('key', 'home')->first();
 
-        // Kung walang ipinadalang "about" (hal. hindi nakapag-load), huwag burahin ang naka-save na
+        // If "about" was not sent (e.g. it failed to load), do not erase the saved content.
         if (!isset($data['about'])) {
             $existing = data_get($row?->content, 'about');
             if ($existing) {
@@ -75,7 +79,7 @@ class HomeContentController extends Controller
             }
         }
 
-        // $data ay validated fields lang, kaya natatanggal ang kung anu-anong dagdag sa request
+        // $data contains only validated fields, so extra request data is discarded.
         $row = HomeContent::updateOrCreate(
             ['key' => 'home'],
             ['content' => $data, 'updated_by' => $request->user()->id]

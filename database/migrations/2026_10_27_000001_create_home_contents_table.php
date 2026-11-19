@@ -11,7 +11,7 @@ return new class extends Migration {
             $table->id();
             $table->string('key')->unique()->default('home');
             $table->json('content');
-            $table->string('updated_by', 64)->nullable(); // id ng admin na huling nag-edit
+            $table->string('updated_by', 64)->nullable(); // ID of the Admin who last edited this content
             $table->timestamps();
         });
     }

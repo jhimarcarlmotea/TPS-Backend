@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\BookingPayment;
 use App\Models\ClientProfile;
 use App\Models\User;
+use App\Support\TpsCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,8 +19,8 @@ class DashboardController extends Controller
     ];
 
     /**
-     * Parehong rule sa Appointments:
-     * Psychotherapy = psychologist na pinili lang. ABA / Assessment = lahat ng ADMIN.
+     * Same rule as Appointments:
+     * Psychotherapy = selected psychologist only. ABA / Assessment = all ADMIN users.
      */
     private function scoped(User $user)
     {
@@ -96,12 +97,15 @@ class DashboardController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
+        $identity = implode(':', [$user->role, $user->id, now()->format('Y-m-d')]);
+
+        return response()->json(TpsCache::remember('dashboard', 'index:' . $identity, 30, function () use ($user) {
         $keys = $this->monthKeys(12);
         $cur  = $keys[11];
         $prev = $keys[10];
         $from = now()->startOfMonth()->subMonths(11);
 
-        // ---------- Income ng buong clinic (verified payments lang) ----------
+        // ---------- Clinic-wide income (verified payments only) ----------
         $paidQuery = BookingPayment::where('status', 'verified')
             ->where('approval_status', '!=', 'declined')
             ->where(function ($q) use ($from) {
@@ -125,7 +129,7 @@ class DashboardController extends Controller
 
         $best = collect($monthly)->sortByDesc('total')->first();
 
-        // Income ngayong buwan kada service
+        // Income by service for this month
         $thisMonth = $paid->filter(fn ($p) => ($p->reviewed_at ?? $p->created_at)->format('Y-m') === $cur);
         $serviceNames = DB::table('services')->pluck('name', 'slug')->all();
         $services  = [];
@@ -141,7 +145,7 @@ class DashboardController extends Controller
             ];
         }
 
-        // ---------- Personal (ayon sa appointments ng user na ito) ----------
+        // ---------- Personal (based on this user's appointments) ----------
         $rows = $this->scoped($user)->where('start_at', '>=', $from)->get();
 
         $isReal = fn ($p) => in_array($this->state($p), ['completed', 'approved'], true);
@@ -150,7 +154,7 @@ class DashboardController extends Controller
             ->groupBy(fn ($p) => $p->start_at->format('Y-m'))
             ->map->count();
 
-        // New clients = unang beses mag-appointment sa clinic (hindi new login)
+        // New clients = first appointment at the clinic (not a new login)
         $firstAt = $this->scoped($user)
             ->selectRaw('user_id, MIN(created_at) as first_at')
             ->groupBy('user_id')
@@ -211,7 +215,7 @@ class DashboardController extends Controller
             'at'   => $p->created_at->toIso8601String(),
         ])->values();
 
-        return response()->json([
+        return [
             'user' => ['first_name' => $user->first_name, 'last_name' => $user->last_name],
 
             'income' => [
@@ -247,7 +251,8 @@ class DashboardController extends Controller
 
             'today'    => $today,
             'activity' => $activity,
-        ]);
+        ];
+        }));
     }
 
     // GET /api/admin/dashboard/calendar?month=2026-10
@@ -257,8 +262,12 @@ class DashboardController extends Controller
 
         $start = Carbon::createFromFormat('!Y-m', $data['month'])->startOfMonth();
         $end   = $start->copy()->endOfMonth();
+        $user = $request->user();
 
-        $rows = $this->scoped($request->user())
+        $identity = implode(':', [$user->role, $user->id, $data['month']]);
+
+        return response()->json(TpsCache::remember('dashboard', 'calendar:' . $identity, 30, function () use ($user, $start, $end) {
+        $rows = $this->scoped($user)
             ->where('approval_status', '!=', 'declined')
             ->whereBetween('start_at', [$start, $end])
             ->orderBy('start_at')
@@ -266,7 +275,7 @@ class DashboardController extends Controller
 
         $names = $this->names($rows);
 
-        return response()->json([
+        return [
             'appointments' => $rows->map(fn ($p) => [
                 'id'           => $p->id,
                 'date'         => $p->start_at->format('Y-m-d'),
@@ -276,6 +285,7 @@ class DashboardController extends Controller
                 'service_name' => self::SERVICE_NAMES[$p->service_id] ?? $p->service_id,
                 'state'        => $this->state($p),
             ])->values(),
-        ]);
+        ];
+        }));
     }
 }

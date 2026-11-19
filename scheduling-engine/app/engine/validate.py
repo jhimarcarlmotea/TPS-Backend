@@ -28,21 +28,22 @@ def check_candidate(c: Booking, providers: dict, t_run: int) -> Optional[str]:
     if not isinstance(c.start, int) or not isinstance(c.end, int):
         return INVALID_CANDIDATE
 
-    # end = start + d(service)
-    if c.end != c.start + DURATION[c.service]:
+    # Use the service's configured duration when supplied by the booking app.
+    duration = c.duration_minutes if c.duration_minutes is not None else DURATION[c.service]
+    if duration <= 0 or c.end != c.start + duration:
         return INVALID_CANDIDATE
 
-    # nasa past
+    # Candidate start time is in the past.
     if c.start < t_run:
         return INVALID_CANDIDATE
 
-    # PC: kailangan ng pinned provider na eligible sa PC
+    # PC: a pinned provider eligible for PC is required.
     if c.service == PC:
         p = providers.get(c.pinned)
         if p is None or PC not in p.eligible:
             return INVALID_CANDIDATE
     else:
-        # ABA/AC: dapat WALANG pinned (admin ang pipili ng engine)
+        # ABA/AC: must NOT be pinned (the engine selects the Admin).
         if c.pinned is not None:
             return INVALID_CANDIDATE
 
@@ -75,11 +76,11 @@ def check_state(active: list, providers: list) -> Optional[str]:
         p = pmap.get(b.pinned)
         if p is None or b.service not in p.eligible:
             return INVALID_STATE
-        # C6: nasa loob ng RAW availability ng provider
+        # C6: within the provider's RAW availability.
         if not fits(b.start, b.end, merge_intervals(p.availability)):
             return INVALID_STATE
         by_provider.setdefault(b.pinned, []).append((b.start, b.end))
-    # C6: walang dalawang pinned ng iisang provider na nag-ooverlap
+    # C6: no two pinned bookings for the same provider may overlap.
     for intervals in by_provider.values():
         if _has_overlap(intervals):
             return INVALID_STATE
@@ -88,13 +89,13 @@ def check_state(active: list, providers: list) -> Optional[str]:
     net = net_availability(providers, pinned)
     by_admin = {}
     for b in unpinned:
-        if b.kappa not in admin_ids:                       # wala o hindi admin
+        if b.kappa not in admin_ids:                       # missing or not an Admin
             return INVALID_STATE
-        # C3: nasa loob ng NET availability ng admin (bawas na ang pinned PC niya)
+        # C3: within the Admin's NET availability (after subtracting their pinned PC booking).
         if not fits(b.start, b.end, net[b.kappa]):
             return INVALID_STATE
         by_admin.setdefault(b.kappa, []).append((b.start, b.end))
-    # C4: walang overlap per admin
+    # C4: no overlap per Admin.
     for intervals in by_admin.values():
         if _has_overlap(intervals):
             return INVALID_STATE

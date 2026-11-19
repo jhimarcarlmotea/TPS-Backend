@@ -10,11 +10,11 @@ return new class extends Migration
     {
         Schema::create('consent_forms', function (Blueprint $t) {
             $t->id();
-            $t->unsignedBigInteger('booking_payment_id')->unique(); // isang consent bawat booking
+            $t->unsignedBigInteger('booking_payment_id')->unique(); // One consent form per booking
             $t->unsignedInteger('user_id')->index();
             $t->longText('intake');   // JSON: Psychotherapy Intake Form
-            $t->longText('consent');  // JSON: mga tinick na agreement
-            $t->longText('dsm5');     // JSON: 23 sagot (0-4)
+            $t->longText('consent');  // JSON: checked agreements
+            $t->longText('dsm5');     // JSON: 23 answers (0-4)
             $t->string('signed_name', 150);
             $t->date('signed_date');
             $t->boolean('is_minor')->default(false);

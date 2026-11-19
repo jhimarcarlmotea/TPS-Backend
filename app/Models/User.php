@@ -7,6 +7,8 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Support\Facades\DB;
+use App\Support\TpsCache;
 
 class User extends Authenticatable
 {
@@ -71,4 +73,21 @@ class User extends Authenticatable
     'pending_email_expires_at' => 'datetime',
     'pending_email_attempts'   => 'integer',
 ];
+
+protected static function booted(): void
+{
+    $invalidate = static function (): void {
+        DB::afterCommit(static fn () => TpsCache::invalidate(
+            'accounts',
+            'appointments',
+            'dashboard',
+            'directory',
+            'schedule',
+            'website',
+        ));
+    };
+
+    static::saved($invalidate);
+    static::deleted($invalidate);
+}
 }

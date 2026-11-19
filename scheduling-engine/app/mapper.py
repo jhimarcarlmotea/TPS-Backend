@@ -10,7 +10,7 @@ from .schemas import (SolveRequest, SolveResponse, Stage1Out, AssignmentItem, Re
 
 def to_engine(req: SolveRequest):
     """SolveRequest -> (candidate, active, providers, t_run, cfg, history)"""
-    run = datetime.fromisoformat(req.run_at)               # wall-clock sa sarili nitong offset
+    run = datetime.fromisoformat(req.run_at)               # wall-clock time in its own offset
     t_run = to_minutes(run.date().isoformat(), f"{run.hour:02d}:{run.minute:02d}")
 
     providers = [
@@ -30,7 +30,8 @@ def to_engine(req: SolveRequest):
     ]
     c = req.candidate
     candidate = Booking(c.booking_id, c.service, to_minutes(c.date, c.start),
-                        to_minutes(c.date, c.end), pinned=c.pinned_provider_id)
+                        to_minutes(c.date, c.end), pinned=c.pinned_provider_id,
+                        duration_minutes=c.duration_minutes)
 
     k = req.config
     cfg = Config(horizon_days=k.horizon_days, slot_minutes=k.slot_minutes,

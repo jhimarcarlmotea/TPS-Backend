@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\ActivityLog;
+use App\Support\PublicStorageUrl;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -40,7 +42,7 @@ class ServiceController extends Controller
             'text'                => $s->description ?? '',
             'goodFor'             => $s->good_for ? json_decode($s->good_for, true) : [],
             'steps'               => $s->steps    ? json_decode($s->steps,    true) : [],
-            'image_url'           => $s->image_path ? Storage::disk('public')->url($s->image_path) : null,
+            'image_url'           => $s->image_path ? PublicStorageUrl::fromPath((string) $s->image_path) : null,
             'enabled'             => (bool) $s->enabled,
             'price'               => $isAssessment ? 0.0 : $price,
             'downpayment_percent' => in_array($slug, $full_only) ? 100 : $downpayment_percent,
@@ -53,6 +55,7 @@ class ServiceController extends Controller
     /** Load services, prices, and payment settings in one go. */
     private function loadAll(): array
     {
+        return TpsCache::remember('catalog', 'services:all', 300, function () {
         $services = DB::table('services')
             ->orderBy('id')
             ->get();
@@ -109,6 +112,7 @@ class ServiceController extends Controller
         }
 
         return $rows;
+        });
     }
 
     // ---------------------------------------------------------------
@@ -179,6 +183,7 @@ class ServiceController extends Controller
             'updated_at'       => now(),
         ]);
 
+        TpsCache::invalidate('catalog', 'dashboard', 'appointments');
         $all = $this->loadAll();
         $created = collect($all)->firstWhere('slug', $slug);
 
@@ -233,6 +238,7 @@ class ServiceController extends Controller
 
         DB::table('services')->where('slug', $slug)->update($update);
 
+        TpsCache::invalidate('catalog', 'dashboard', 'appointments');
         // Re-fetch and return the updated service
         $all = $this->loadAll();
         $updated = collect($all)->firstWhere('slug', $slug);
@@ -276,7 +282,8 @@ class ServiceController extends Controller
             'updated_at' => now(),
         ]);
 
-        return response()->json(['image_url' => Storage::disk('public')->url($path)]);
+        TpsCache::invalidate('catalog');
+        return response()->json(['image_url' => PublicStorageUrl::fromPath($path)]);
     }
 
     /** DELETE /api/admin/services/{slug}/image */
@@ -293,6 +300,7 @@ class ServiceController extends Controller
                 'image_path' => null,
                 'updated_at' => now(),
             ]);
+            TpsCache::invalidate('catalog');
         }
 
         return response()->json(['image_url' => null]);
@@ -318,6 +326,7 @@ class ServiceController extends Controller
         }
         DB::table('service_prices')->where('service_id', $slug)->delete();
 
+        TpsCache::invalidate('catalog', 'dashboard', 'appointments');
         $admin = request()?->user();
         if ($admin) {
             ActivityLog::log(

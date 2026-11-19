@@ -90,7 +90,7 @@ class SchedulingEngineService
             $excludeBookingId,
         );
 
-        // History-based Stage 2: kung walang history, hindi tatakbo ang Stage 2 sa Python.
+        // History-based Stage 2: if there is no history, Stage 2 will not run in Python.
         $history = $this->buildHistory($serviceSlug, $userId);
         if ($history !== null) {
             $payload['history'] = $history;
@@ -101,7 +101,7 @@ class SchedulingEngineService
             return null;
         }
 
-        // Kailangan ng caller ang id ng candidate para mahanap ang ILP assignment nito.
+        // The caller needs the candidate ID to find its ILP assignment.
         $result['_candidate_id'] = $payload['candidate']['booking_id'];
 
         if (($result['job_status'] ?? null) !== 'COMPLETED') {
@@ -118,7 +118,7 @@ class SchedulingEngineService
     // ---------------------------------------------------------------- history
 
     /**
-     * Pinakabagong completed (o approved at tapos na) appointment ng client para sa parehong service.
+     * Most recent completed (or approved and elapsed) appointment for this client's service.
      * Returns ['weekday' => 1..7 (ISO), 'start' => 'HH:MM'] o null.
      */
     public function buildHistory(string $serviceSlug, ?int $userId): ?array
@@ -127,8 +127,8 @@ class SchedulingEngineService
             return null;
         }
 
-        // "Completed" = minarkahan ng Admin na Done (completed_at), O approved na at tapos na ang oras.
-        // (Ganito rin ang nakikita ng client sa "Completed appointments".)
+        // "Completed" means marked Done by an Admin (completed_at), or approved with an elapsed end time.
+        // This matches what the client sees under "Completed appointments".
         // end_at is Asia/Manila wall clock — compare against Manila now.
         $nowManila = now('Asia/Manila')->format('Y-m-d H:i:s');
 
@@ -216,9 +216,9 @@ class SchedulingEngineService
     {
         // Query User first (has role + is_active), then join to Provider via user_id.
         // Provider model has no user() relationship, so we avoid with()/whereHas().
-        // Lahat ng active ADMIN + AFFILIATE ang ipinapadala, kahit anong service ang candidate.
-        // Kailangan ito para kilala ng engine ang pinned PC bookings (kahit affiliate) at
-        // para makita ng ILP ang lahat ng Admin kapag ABA/AC ang inaayos.
+        // Send all active ADMIN + AFFILIATE users, regardless of the candidate's service.
+        // This lets the engine recognize pinned PC bookings (including affiliates) and
+        // gives the ILP all Admins to consider when assigning ABA/AC.
         $users = User::where('is_active', true)
             ->whereIn('role', ['ADMIN', 'AFFILIATE'])
             ->get()
@@ -226,8 +226,8 @@ class SchedulingEngineService
 
         $dbProviders = Provider::whereIn('user_id', $users->keys())->get();
 
-        // Availability window: nakaangkla sa petsa ng candidate (hindi sa "today"),
-        // para hindi mawala ang availability ng malalayong petsa.
+        // Anchor the availability window to the candidate date (not "today"),
+        // so availability on future dates is included.
         $windowStart = Carbon::parse($candidateDate)->startOfDay();
         $windowEnd   = $windowStart->copy()->addDays(self::HORIZON_DAYS + 1)->endOfDay();
 
@@ -277,7 +277,7 @@ class SchedulingEngineService
         ?int   $excludeBookingId,
         array  $knownProviderIds,
     ): array {
-        // Same window as availability, para laging nasa loob ng availability ang bookings
+        // Use the same window as availability so bookings fall within that window.
         $windowStart = Carbon::parse($candidateDate)->startOfDay();
         $windowEnd   = $windowStart->copy()->addDays(self::HORIZON_DAYS + 1)->endOfDay();
 
@@ -291,8 +291,8 @@ class SchedulingEngineService
             $query->where('id', '!=', $excludeBookingId);
         }
 
-        // Lahat ng service ang kasama: ang PC ng isang Admin ay humaharang sa ABA/AC niya,
-        // at ang ABA/AC ay humaharang sa PC niya.
+        // Include all services: an Admin's PC booking blocks their ABA/AC bookings,
+        // and ABA/AC bookings block their PC slots.
         $query->whereIn('service_id', array_keys(self::SERVICE_MAP));
 
         $bookings = $query->get();
@@ -303,7 +303,7 @@ class SchedulingEngineService
             if ($engineSvc === null) {
                 continue;
             }
-            // Walang kilalang provider (inactive/na-delete) -> huwag isama, INVALID_STATE ang magiging resulta
+            // Unknown provider (inactive/deleted): omit it so the result becomes INVALID_STATE.
             if (!$b->provider_id || !in_array((string) $b->provider_id, $knownProviderIds, true)) {
                 Log::warning('SchedulingEngineService: booking skipped, unknown provider', [
                     'booking_id' => $b->id, 'provider_id' => $b->provider_id,
@@ -343,6 +343,8 @@ class SchedulingEngineService
             'date'       => $date,
             'start'      => $startTime,
             'end'        => $endTime,
+            'duration_minutes' => (int) Carbon::parse($date . ' ' . $startTime)
+                ->diffInMinutes(Carbon::parse($date . ' ' . $endTime)),
         ];
 
         if ($engineService === 'PC' && $providerId) {
@@ -405,8 +407,8 @@ class SchedulingEngineService
     }
 
     /**
-     * Ang Admin (Provider id) na pinili ng ILP para sa candidate ABA/AC.
-     * Null kung walang assignment sa response.
+     * The Admin (Provider ID) selected by the ILP for an ABA/AC candidate.
+     * Null if the response has no assignment.
      */
     public static function assignedAdminProviderId(?array $result): ?int
     {
@@ -423,7 +425,7 @@ class SchedulingEngineService
     }
 
     /**
-     * Reassignments ng ILP: [['booking_id' => '12', 'from_admin_id' => '1', 'to_admin_id' => '2'], ...]
+     * ILP reassignments: [['booking_id' => '12', 'from_admin_id' => '1', 'to_admin_id' => '2'], ...]
      */
     public static function reassignments(?array $result): array
     {

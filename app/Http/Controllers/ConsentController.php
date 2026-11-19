@@ -231,7 +231,7 @@ class ConsentController extends Controller
             ]);
         }
 
-        // "Yes" na walang detalye
+        // "Yes" without details.
         $errors = [];
         if ($this->isPsychotherapy($p)) {
             foreach (['prev_therapy', 'diagnosed', 'medications', 'medical'] as $k) {
@@ -241,7 +241,7 @@ class ConsentController extends Controller
             }
         }
 
-        // Under 18: kailangan ang magulang/guardian
+        // Under 18: a parent or guardian is required.
         $age     = Carbon::parse($data['intake']['birthdate'])->age;
         $isMinor = $age < 18;
         $gName   = trim((string) ($data['guardian']['name'] ?? ''));

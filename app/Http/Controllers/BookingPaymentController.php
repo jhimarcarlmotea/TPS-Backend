@@ -11,6 +11,8 @@ use App\Models\SlotHold;
 use App\Models\User;
 use App\Models\ProviderAvailability;
 use App\Services\SchedulingEngineService;
+use App\Support\PublicStorageUrl;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -69,11 +71,17 @@ class BookingPaymentController extends Controller
             'service'            => ['required', 'string', 'max:50'],
             'assessment_type_id' => ['nullable', 'integer'],
         ]);
+        $identity = implode(':', [
+            $data['service'],
+            (int) ($data['assessment_type_id'] ?? 0),
+        ]);
+
         $service = DB::table('services')->where('slug', $data['service'])->first();
         if (!$service || !$service->enabled) {
             return response()->json(['message' => 'This service is not currently available.'], 404);
         }
 
+        return response()->json(TpsCache::remember('catalog', 'payment-options:' . $identity, 60, function () use ($data, $service) {
         $settings = DB::table('payment_settings')->first();
         if ($data['service'] === 'assessment' && !empty($data['assessment_type_id'])) {
             $typePrice = (float) DB::table('assessment_types')
@@ -90,7 +98,7 @@ class BookingPaymentController extends Controller
                 ? (float) ($settings->assessment_downpayment_amount ?? 750)
                 : null);
 
-        return response()->json([
+        return [
             'downpayment_allowed' => !$this->isFullPaymentOnlyService($data['service'])
                 && ($fixedDownpayment === null || ($fixedDownpayment > 0 && $fixedDownpayment < $price)),
             'price'               => $price,
@@ -100,7 +108,8 @@ class BookingPaymentController extends Controller
             'methods'             => PaymentMethod::where('enabled', true)
                 ->orderBy('sort')->orderBy('id')->get()
                 ->map(fn ($m) => $m->toArrayPublic())->values(),
-        ]);
+        ];
+        }));
     }
 
     // POST /api/booking/payments
@@ -234,7 +243,7 @@ class BookingPaymentController extends Controller
                 'receipt_hash'         => $receiptHash,
             ];
 
-            // Nag-bayad ulit ang parehong client para sa parehong oras? I-update ang na-reject na row.
+            // If the same client pays again for the same time, update the rejected row.
             $existing = BookingPayment::where('user_id', $user->id)
                 ->where('status', 'rejected')
                 ->where('provider_id', $hold->provider_id)
@@ -256,7 +265,8 @@ class BookingPaymentController extends Controller
                     'reviewed_by'     => null,
                     'reviewed_at'     => null,
                     'reject_reason'   => null,
-                    'created_at'      => now(), // lalabas ulit sa itaas bilang bago
+                    'reminder_sent_at' => null,
+                    'created_at'      => now(), // Make it appear at the top as a new entry again.
                 ])->save();
 
                 $payment = $existing;
@@ -269,7 +279,7 @@ class BookingPaymentController extends Controller
 
             $clientProfile->booking_payment_id = $payment->id;
             $clientProfile->save();
-            $hold->delete(); // ang booking_payments na ang naka-block sa slot
+            $hold->delete(); // booking_payments now blocks the slot
 
             $cName = $clientProfile->full_name ?: trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
             $sName = self::SERVICE_NAMES[$payment->service_id] ?? ucfirst($payment->service_id);
@@ -494,13 +504,13 @@ class BookingPaymentController extends Controller
             'method'        => $row->method_name,
             'account_name'  => $row->account_name,
             'reject_reason' => $row->reject_reason,
-            'receipt_url'   => Storage::disk('public')->url($row->receipt_path),
+            'receipt_url'   => PublicStorageUrl::fromPath((string) $row->receipt_path),
             'created_at'    => Carbon::parse($row->created_at)->toIso8601String(),
             'reviewed_at'   => $row->reviewed_at ? Carbon::parse($row->reviewed_at)->toIso8601String() : null,
         ];
     }
 
-    // GET /api/booking/balance/{id} - data para sa balance page
+    // GET /api/booking/balance/{id} - data for the balance page
     public function balanceShow(Request $request, $id)
     {
         $p    = BookingPayment::where('user_id', $request->user()->id)->findOrFail($id);
@@ -549,7 +559,7 @@ class BookingPaymentController extends Controller
         ]);
     }
 
-    // POST /api/booking/balance/{id} - magpadala ng balance receipt
+    // POST /api/booking/balance/{id} - submit a balance receipt
     public function balanceSubmit(Request $request, $id)
     {
         $data = $request->validate([
@@ -594,7 +604,7 @@ class BookingPaymentController extends Controller
             $rowId = DB::table('balance_payments')->insertGetId([
                 'booking_payment_id' => $p->id,
                 'user_id'            => $userId,
-                'amount'             => $p->balance, // laging galing sa server, hindi sa client
+                'amount'             => $p->balance, // Always use the server value, not the client value.
                 'method_name'        => $method->name,
                 'account_name'       => trim($data['account_name']),
                 'receipt_path'       => $path,
@@ -625,8 +635,8 @@ class BookingPaymentController extends Controller
     // ---------------------------------------------------------------
 
     /**
-     * Psychotherapy: makikita lang ng psychologist na pinili.
-     * ABA / Assessment: makikita lang ng ADMIN na naka-assign (provider_id).
+     * Psychotherapy: visible only to the selected psychologist.
+     * ABA / Assessment: visible only to the assigned ADMIN (provider_id).
      */
     private function scoped(User $user)
     {
@@ -636,8 +646,8 @@ class BookingPaymentController extends Controller
             return $q->where('psychologist_user_id', $user->id);
         }
 
-        // ADMIN: psychotherapy na sila ang pinili, at ABA/Assessment na naka-assign
-        // sa KANYANG provider_id lang. Hindi na makikita ang appointment ng ibang Admin.
+        // ADMIN: psychotherapy assigned to them and ABA/Assessment assigned
+        // only to their provider_id. They cannot view another Admin's appointment.
         $providerId = Provider::where('user_id', $user->id)->value('id');
 
         return $q->where(function ($w) use ($user, $providerId) {
@@ -656,7 +666,7 @@ class BookingPaymentController extends Controller
         $profile = $profiles['booking'][$p->id] ?? $profiles['user'][$p->user_id] ?? null;
         $u       = $users[$p->user_id] ?? null;
 
-        // Pinakabagong balance receipt (galing sa preloaded list kung meron, kung hindi mag-query)
+        // Latest balance receipt (use the preloaded list when available; otherwise, query).
         $bal         = $balances !== null ? ($balances[$p->id] ?? null) : $this->latestBalance($p->id);
         $balancePaid = $bal && $bal->status === 'verified';
 
@@ -681,13 +691,13 @@ class BookingPaymentController extends Controller
             'balance'          => $p->balance,
             'status'           => $p->status,
             'reject_reason'    => $p->reject_reason,
-            'receipt_url'      => Storage::disk('public')->url($p->receipt_path),
+            'receipt_url'      => PublicStorageUrl::fromPath((string) $p->receipt_path),
             'created_at'       => $p->created_at->toIso8601String(),
 
             // --- Balance ---
             'balance_payment'    => $this->balanceInfo($bal),
             'balance_paid'       => (bool) $balancePaid,
-            // Ang orihinal na downpayment (kapag bayad na ang balance, full na ang amount_paid)
+            // Original downpayment (once the balance is paid, amount_paid is the full amount).
             'downpayment_amount' => $balancePaid
                 ? round((float) $p->total_amount - (float) $bal->amount, 2)
                 : (float) $p->amount_paid,
@@ -714,7 +724,7 @@ class BookingPaymentController extends Controller
     public function index(Request $request)
     {
         $rows = $this->scoped($request->user())->orderByDesc('created_at')->limit(300)->get();
-        // Itago ang na-reject na payment kung may mas bago nang bayad ang parehong client para sa parehong oras
+        // Hide a rejected payment if the same client has a newer payment for the same time.
         $rows = $rows->reject(function ($p) use ($rows) {
             return $p->status === 'rejected'
                 && $rows->contains(fn ($o) => $o->id > $p->id
@@ -727,7 +737,7 @@ class BookingPaymentController extends Controller
         $profiles = $this->profilesFor($rows);
         $users    = User::whereIn('id', $ids)->get()->keyBy('id');
 
-        // Pinakabagong balance receipt ng bawat payment
+        // Latest balance receipt for each payment.
         $balances = DB::table('balance_payments')
             ->whereIn('booking_payment_id', $rows->pluck('id'))
             ->orderBy('id')->get()
@@ -740,7 +750,7 @@ class BookingPaymentController extends Controller
             'payments' => $rows->map(fn ($p) => $this->format($p, $profiles, $users, $balances))->values(),
             'stats'    => [
                 'verified_total' => (float) $rows->where('status', 'verified')->sum('amount_paid'),
-                // kasama ang balance receipts na naghihintay ng review
+                // Include balance receipts awaiting review.
                 'to_verify'      => $rows->where('status', 'to_verify')->count()
                     + $balances->where('status', 'to_verify')->count(),
                 'balance_due'    => (float) $active->where('payment_type', 'down')->sum('balance'),
@@ -816,7 +826,7 @@ class BookingPaymentController extends Controller
         return $this->review($request, $id, 'rejected');
     }
 
-    // Admin / Affiliate: i-verify o i-reject ang balance receipt
+    // Admin / Affiliate: verify or reject a balance receipt.
     private function balanceReview(Request $request, $id, string $status)
     {
         $user = $request->user();
@@ -849,7 +859,7 @@ class BookingPaymentController extends Controller
                 'updated_at'    => now(),
             ]);
 
-            // Verified: ang downpayment ay nagiging full payment na
+            // Verified: the downpayment becomes a full payment.
             if ($status === 'verified') {
                 $newPaid = round((float) $p->amount_paid + (float) $bal->amount, 2);
                 $p->forceFill([

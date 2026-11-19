@@ -3,7 +3,9 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Storage;
+use App\Support\PublicStorageUrl;
+use Illuminate\Support\Facades\DB;
+use App\Support\TpsCache;
 
 class PaymentMethod extends Model
 {
@@ -13,6 +15,16 @@ class PaymentMethod extends Model
     ];
 
     protected $casts = ['enabled' => 'boolean'];
+
+    protected static function booted(): void
+    {
+        $invalidate = static function (): void {
+            DB::afterCommit(static fn () => TpsCache::invalidate('catalog'));
+        };
+
+        static::saved($invalidate);
+        static::deleted($invalidate);
+    }
 
     public function toArrayPublic(): array
     {
@@ -24,7 +36,7 @@ class PaymentMethod extends Model
             'account_name'   => $this->account_name,
             'account_number' => $this->account_number,
             'bank'           => $this->bank,
-            'qr_url'         => $this->qr_path ? Storage::disk('public')->url($this->qr_path) : null,
+            'qr_url'         => $this->qr_path ? PublicStorageUrl::fromPath((string) $this->qr_path) : null,
             'enabled'        => $this->enabled,
         ];
     }

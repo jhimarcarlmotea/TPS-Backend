@@ -17,9 +17,9 @@ router = APIRouter(prefix="/api/v1/algorithm", dependencies=[Depends(require_ser
 
 @router.post("/solve", response_model=SolveResponse)
 def solve(req: SolveRequest):
-    # `def` (hindi async) -> tumatakbo sa threadpool, hindi nababara ang event loop ng solver
+    # A regular `def` runs in a threadpool and does not block the solver's event loop.
 
-    # HTTP 413: lampas sa max_bookings (bago pa tumakbo ang engine)
+    # HTTP 413: exceeds max_bookings (before the engine runs).
     if len(req.active_bookings) + 1 > req.config.max_bookings:
         body = SolveResponse(job_id=req.job_id, job_status=INVALID,
                              invalid=[InvalidItem(code=PAYLOAD_TOO_LARGE)],
@@ -31,7 +31,7 @@ def solve(req: SolveRequest):
         result = check_and_recommend(candidate, active, providers, t_run, cfg, history)
         return to_response(req.job_id, result)
     except Exception:
-        # Hindi dapat mag-crash ang service: structured result, HTTP 200
+        # The service should not crash; return a structured result with HTTP 200.
         log.exception("solve failed job_id=%s", req.job_id)
         return SolveResponse(job_id=req.job_id, job_status=SOLVER_ERROR, reason="INTERNAL_ERROR",
                              metrics=MetricsOut(runtime_ms=0.0))

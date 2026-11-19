@@ -47,8 +47,17 @@ def test_valid_candidates(pmap):
 
 
 def test_end_must_equal_start_plus_duration(pmap):
-    assert check_candidate(Booking("c", ABA, h(9), h(10)), pmap, 0) == INVALID_CANDIDATE   # dapat 2 oras
-    assert check_candidate(pc("c", h(9), h(11), "A1"), pmap, 0) == INVALID_CANDIDATE       # dapat 1 oras
+    assert check_candidate(Booking("c", ABA, h(9), h(10)), pmap, 0) == INVALID_CANDIDATE   # should be 2 hours
+    assert check_candidate(pc("c", h(9), h(11), "A1"), pmap, 0) == INVALID_CANDIDATE       # should be 1 hour
+
+
+def test_candidate_uses_configured_duration_when_provided(pmap):
+    candidate = Booking("c", ABA, h(9), h(10), duration_minutes=60)
+
+    assert check_candidate(candidate, pmap, 0) is None
+    assert check_candidate(
+        Booking("c", ABA, h(9), h(11), duration_minutes=60), pmap, 0
+    ) == INVALID_CANDIDATE
 
 
 def test_start_in_the_past(pmap):
@@ -65,8 +74,8 @@ def test_missing_id_or_unknown_service(pmap):
 
 
 def test_pc_needs_known_pinned_provider(pmap):
-    assert check_candidate(Booking("c", PC, h(9), h(10)), pmap, 0) == INVALID_CANDIDATE            # walang pinned
-    assert check_candidate(pc("c", h(9), h(10), "NOPE"), pmap, 0) == INVALID_CANDIDATE            # hindi existing
+    assert check_candidate(Booking("c", PC, h(9), h(10)), pmap, 0) == INVALID_CANDIDATE            # no pinned provider
+    assert check_candidate(pc("c", h(9), h(10), "NOPE"), pmap, 0) == INVALID_CANDIDATE            # provider does not exist
 
 
 def test_aba_ac_cannot_be_pinned(pmap):
@@ -101,15 +110,15 @@ def test_unpinned_outside_availability(providers):
 
 
 def test_unpinned_overlaps_pinned_pc_of_same_admin(providers):
-    # PC ni A1 9-10, tapos AC 9-10 naka-assign din kay A1 -> double-booked
+    # A1's PC is 9-10, and an AC assigned to A1 is also 9-10 -> double-booked.
     active = [pc("p", h(9), h(10), "A1"), un("a", AC, h(9), h(10), "A1")]
     assert check_state(active, providers) == INVALID_STATE
 
 
 def test_unpinned_without_valid_admin(providers):
-    assert check_state([Booking("a", AC, h(10), h(11))], providers) == INVALID_STATE            # walang kappa
+    assert check_state([Booking("a", AC, h(10), h(11))], providers) == INVALID_STATE            # missing kappa
     assert check_state([un("a", AC, h(10), h(11), "F1")], providers) == INVALID_STATE           # affiliate
-    assert check_state([un("a", AC, h(10), h(11), "XX")], providers) == INVALID_STATE           # hindi existing
+    assert check_state([un("a", AC, h(10), h(11), "XX")], providers) == INVALID_STATE           # Admin does not exist
 
 
 def test_pinned_outside_availability(providers):

@@ -28,9 +28,9 @@ def ordered_candidates(c: Booking, history: HistoryPref, t_run: int,
     provider_id: c.pinned para sa PC, None para sa ABA/AC
     """
     day = c.start // 1440
-    n_slots = cfg.horizon_days * 1440 // cfg.slot_minutes          # 168 kung H=7, g=60
+    n_slots = cfg.horizon_days * 1440 // cfg.slot_minutes          # 168 when H=7 and g=60
     grid = [1440 * day + j * cfg.slot_minutes for j in range(n_slots)]
-    # lampas na ang t_run, at hindi na uulitin ang oras na pinili na ng client
+    # Skip times before t_run and the time already selected by the client.
     grid = [a for a in grid if a >= t_run and a != c.start]
 
     # Deterministic ranking according to 4 priorities:

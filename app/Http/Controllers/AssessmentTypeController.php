@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ActivityLog;
+use App\Support\TpsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -14,12 +15,12 @@ class AssessmentTypeController extends Controller
     // ---------------------------------------------------------------
     public function index()
     {
-        $types = DB::table('assessment_types')
+        $types = TpsCache::remember('catalog', 'assessment-types:enabled', 300, fn () => DB::table('assessment_types')
             ->where('enabled', true)
             ->orderBy('sort')
             ->orderBy('id')
             ->get()
-            ->map(fn($t) => $this->format($t));
+            ->map(fn($t) => $this->format($t)));
 
         return response()->json(['types' => $types]);
     }
@@ -30,11 +31,11 @@ class AssessmentTypeController extends Controller
     // ---------------------------------------------------------------
     public function adminIndex()
     {
-        $types = DB::table('assessment_types')
+        $types = TpsCache::remember('catalog', 'assessment-types:all', 300, fn () => DB::table('assessment_types')
             ->orderBy('sort')
             ->orderBy('id')
             ->get()
-            ->map(fn($t) => $this->format($t));
+            ->map(fn($t) => $this->format($t)));
 
         return response()->json(['types' => $types]);
     }
@@ -66,6 +67,7 @@ class AssessmentTypeController extends Controller
         ]);
 
         $type = DB::table('assessment_types')->find($id);
+        TpsCache::invalidate('catalog');
 
         $admin = $request->user();
         if ($admin) {
@@ -109,6 +111,7 @@ class AssessmentTypeController extends Controller
         DB::table('assessment_types')->where('id', $id)->update($patch);
 
         $updated = DB::table('assessment_types')->find($id);
+        TpsCache::invalidate('catalog');
 
         $admin = $request->user();
         if ($admin) {
@@ -135,6 +138,7 @@ class AssessmentTypeController extends Controller
         if (!$type) return response()->json(['message' => 'Not found.'], 404);
 
         DB::table('assessment_types')->where('id', $id)->delete();
+        TpsCache::invalidate('catalog');
 
         $admin = request()?->user();
         if ($admin) {

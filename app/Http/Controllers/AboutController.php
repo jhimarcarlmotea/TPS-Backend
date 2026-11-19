@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\HomeContent;
 use App\Models\User;
+use App\Support\TpsCache;
 use Illuminate\Support\Collection;
 
 class AboutController extends Controller
@@ -12,7 +13,7 @@ class AboutController extends Controller
 
     private const DEFAULT_INTRO = 'Threefold Behavioral Interventions and Psychological Services is a clinic in Pasig that offers psychotherapy and counseling, ABA therapy, and assessment in a safe, supportive environment. Your wellbeing comes first, and you move at your own pace.';
 
-    /** Ang "about" na nakasave sa home content (headline, intro, members). */
+    /** "About" content saved with the home content (headline, intro, members). */
     private function settings(): array
     {
         $row   = HomeContent::where('key', 'home')->first();
@@ -22,9 +23,9 @@ class AboutController extends Controller
     }
 
     /**
-     * Lahat ng active ADMIN at AFFILIATE, kasama ang settings ni admin.
-     * Awtomatiko: kapag may bagong admin/affiliate account, lalabas agad dito.
-     * Ang order ay ayon sa naka-save; ang bago ay napupunta sa dulo.
+     * All active ADMIN and AFFILIATE users, including Admin-configured settings.
+     * New Admin or Affiliate accounts appear here automatically.
+     * Preserve the saved order and append new users at the end.
      */
     private function members(array $about): Collection
     {
@@ -58,13 +59,14 @@ class AboutController extends Controller
             });
     }
 
-    // GET /api/about/team  (public, walang login)
+    // GET /api/about/team (public, no login required)
     public function team()
     {
+        return response()->json(TpsCache::remember('website', 'about:team:public', 300, function () {
         $about = $this->settings();
 
-        // Public ito, kaya ang mga ligtas na field lang ang ilalabas
-        // (walang email, phone, o iba pang private na data).
+        // This is public, so expose only safe fields
+        // (no email, phone, or other private data).
         $team = $this->members($about)
             ->filter(fn ($m) => $m['visible'])
             ->map(fn ($m) => [
@@ -77,16 +79,17 @@ class AboutController extends Controller
             ])
             ->values();
 
-        return response()->json([
+        return [
             'about' => [
                 'headline' => $about['headline'] ?? self::DEFAULT_HEADLINE,
                 'intro'    => $about['intro'] ?? self::DEFAULT_INTRO,
             ],
             'team' => $team,
-        ]);
+        ];
+        }));
     }
 
-    // GET /api/admin/about-team  (ADMIN lang)
+    // GET /api/admin/about-team (ADMIN only)
     public function adminTeam()
     {
         $about = $this->settings();

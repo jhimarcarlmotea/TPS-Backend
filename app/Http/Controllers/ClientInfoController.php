@@ -23,7 +23,7 @@ class ClientInfoController extends Controller
     }
 
     // GET /api/booking/client-info
-    // Kung may naka-save na, ibalik. Kung wala, i-prefill mula sa account.
+    // Return saved details if available; otherwise, prefill from the account.
     public function show(Request $request)
     {
         $user    = $request->user();

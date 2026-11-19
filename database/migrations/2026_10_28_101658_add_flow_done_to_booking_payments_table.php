@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('booking_payments', function (Blueprint $t) {
-            // Kapag may laman, tapos na ang booking flow ng client (consent/confirmation)
+            // Set when the client's booking flow (consent/confirmation) is complete.
             $t->dateTime('flow_done_at')->nullable()->after('completed_at');
         });
     }

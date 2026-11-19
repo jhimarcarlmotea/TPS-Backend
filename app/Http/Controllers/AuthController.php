@@ -109,7 +109,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Google credential token is required'], 400);
         }
 
-        // I-verify ang Google Token gamit ang API ng Google
+        // Verify the Google token using the Google API.
         $googleResponse = Http::get("https://oauth2.googleapis.com/tokeninfo?id_token={$credential}");
 
         if ($googleResponse->failed()) {
@@ -122,7 +122,7 @@ class AuthController extends Controller
         $firstName = $payload['given_name'] ?? 'Google';
         $lastName = $payload['family_name'] ?? 'User';
 
-        // Hanapin ang user gamit ang google_id o email
+        // Find the user by google_id or email.
         $user = User::where('google_id', $googleId)
             ->orWhere('email', $email)
             ->first();

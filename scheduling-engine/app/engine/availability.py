@@ -6,7 +6,7 @@ Lahat ay half-open [s, f).
 
 def merge_intervals(intervals) -> list:
     """I-sort at i-merge ang magkapatong O magkadikit na intervals."""
-    items = sorted((s, f) for s, f in intervals if f > s)     # tanggal ang zero/negative length
+    items = sorted((s, f) for s, f in intervals if f > s)     # Remove zero/negative-length intervals
     merged = []
     for s, f in items:
         if merged and s <= merged[-1][1]:                      # nag-ooverlap o dikit
@@ -24,7 +24,7 @@ def subtract_intervals(avail, blocked) -> list:
     for s, f in merge_intervals(avail):
         cur = s
         for bs, bf in blocked:
-            if bf <= cur or bs >= f:                           # walang tama sa [cur, f)
+            if bf <= cur or bs >= f:                           # No overlap with [cur, f)
                 continue
             if bs > cur:
                 result.append((cur, bs))

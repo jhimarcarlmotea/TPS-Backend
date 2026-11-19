@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use App\Support\TpsCache;
 
 class ConsentForm extends Model
 {
@@ -20,4 +22,14 @@ class ConsentForm extends Model
         'signed_date'  => 'date:Y-m-d',
         'submitted_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        $invalidate = static function (): void {
+            DB::afterCommit(static fn () => TpsCache::invalidate('appointments'));
+        };
+
+        static::saved($invalidate);
+        static::deleted($invalidate);
+    }
 }

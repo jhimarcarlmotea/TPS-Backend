@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+use App\Support\TpsCache;
 
 class ActivityLog extends Model
 {
@@ -29,6 +31,16 @@ class ActivityLog extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        $invalidate = static function (): void {
+            DB::afterCommit(static fn () => TpsCache::invalidate('reports'));
+        };
+
+        static::saved($invalidate);
+        static::deleted($invalidate);
+    }
 
     /**
      * Helper to write an activity log.

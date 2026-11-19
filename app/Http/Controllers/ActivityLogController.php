@@ -8,6 +8,7 @@ use App\Models\ClientProfile;
 use App\Models\Provider;
 use App\Models\ProviderAvailability;
 use App\Models\User;
+use App\Support\TpsCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,19 @@ class ActivityLogController extends Controller
             $this->backfillHistoricalLogs();
         }
 
+        $user = $request->user();
+        $identity = serialize([
+            'viewer' => [$user->role, $user->id],
+            'q' => trim((string) $request->input('q', '')),
+            'role' => $request->input('role'),
+            'category' => $request->input('category'),
+            'time_range' => $request->input('time_range'),
+            'page' => max(1, (int) $request->input('page', 1)),
+            'per_page' => max(10, min(100, (int) $request->input('per_page', 25))),
+            'date' => now()->toDateString(),
+        ]);
+
+        return response()->json(TpsCache::remember('reports', 'activity-logs:' . $identity, 15, function () use ($request) {
         $query = ActivityLog::query();
 
         // Search
@@ -50,7 +64,7 @@ class ActivityLogController extends Controller
             }
         }
 
-        // Filter by Category: appointment | payment | schedule | account | service | system
+        // Filter by Category: appointment | payment | schedule | account | service | backup | system
         if ($cat = $request->input('category')) {
             $catLower = strtolower(trim($cat));
             if ($catLower !== 'all') {
@@ -80,7 +94,7 @@ class ActivityLogController extends Controller
         $perPage = max(10, min(100, (int) $request->input('per_page', 25)));
         $logs = $query->orderByDesc('created_at')->orderByDesc('id')->paginate($perPage);
 
-        return response()->json([
+        return [
             'logs' => $logs->items(),
             'meta' => [
                 'current_page' => $logs->currentPage(),
@@ -96,7 +110,8 @@ class ActivityLogController extends Controller
                 'payment_events'     => $paymentEvents,
                 'reschedule_cancel'  => $rescheduleCancel,
             ],
-        ]);
+        ];
+        }));
     }
 
     /**
